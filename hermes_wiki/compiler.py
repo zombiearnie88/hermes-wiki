@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hermes_wiki.config import load_config
+from hermes_wiki.runtime import generate_text
 from hermes_wiki.schema import get_agents_md
 from hermes_wiki.workspace import WorkspacePaths
 
@@ -109,19 +110,7 @@ class CompileResult:
 
 
 def _generate_text(model: str, system_prompt: str, user_prompt: str) -> str:
-    from run_agent import AIAgent
-
-    agent = AIAgent(
-        model=model,
-        quiet_mode=True,
-        skip_memory=True,
-        skip_context_files=True,
-        ephemeral_system_prompt=system_prompt,
-        enabled_toolsets=[],
-        max_iterations=1,
-    )
-    response = agent.chat(user_prompt)
-    return (response or "").strip()
+    return generate_text(model, system_prompt, user_prompt)
 
 
 def _parse_json(text: str) -> list | dict:
@@ -469,6 +458,8 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
     source_file = f"summaries/{doc_name}.md"
     concept_names: list[str] = []
     concept_briefs_map: dict[str, str] = {}
+    created_count = 0
+    updated_count = 0
 
     for concept in create_items:
         if not isinstance(concept, dict) or "name" not in concept:
@@ -494,6 +485,7 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
         _write_concept(wiki_dir, name, page_content, source_file, False, brief=brief)
         safe_name = _sanitize_concept_name(name)
         concept_names.append(safe_name)
+        created_count += 1
         if brief:
             concept_briefs_map[safe_name] = brief
 
@@ -537,6 +529,7 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
         _write_concept(wiki_dir, name, page_content, source_file, True, brief=brief)
         safe_name = _sanitize_concept_name(name)
         concept_names.append(safe_name)
+        updated_count += 1
         if brief:
             concept_briefs_map[safe_name] = brief
 
@@ -559,7 +552,7 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
     )
     return CompileResult(
         doc_brief=doc_brief,
-        created_concepts=len(concept_names[: len(create_items)]),
-        updated_concepts=len(concept_names[len(create_items) :]),
+        created_concepts=created_count,
+        updated_concepts=updated_count,
         related_concepts=len(sanitized_related),
     )

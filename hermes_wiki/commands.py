@@ -18,7 +18,7 @@ def _resolve_workspace(workspace_override: str | None) -> tuple[Path | None, str
         if not candidate.exists():
             return None, f"Workspace path does not exist: {candidate}"
         paths = find_workspace(candidate)
-        if paths is None or paths.root != candidate:
+        if paths is None:
             return None, f"Not a Hermes wiki workspace: {candidate}"
         return paths.root, None
 
@@ -118,35 +118,43 @@ def _run_add(target_path: str, workspace_override: str | None) -> str:
     lines: list[str] = []
     registry = HashRegistry(paths.hashes_path)
     for file_path in files:
-        convert_result = convert_document(file_path, paths)
-        if convert_result.skipped:
-            lines.append(f"SKIP {file_path.name}: already in workspace")
-            continue
+        try:
+            convert_result = convert_document(file_path, paths)
+            if convert_result.skipped:
+                lines.append(f"SKIP {file_path.name}: already in workspace")
+                continue
 
-        if convert_result.unsupported_long_doc:
-            lines.append(
-                f"UNSUPPORTED {file_path.name}: long documents are not supported yet "
-                f"({convert_result.long_doc_page_count} pages >= {config.get('long_doc_threshold', 20)} threshold)"
+            if convert_result.unsupported_long_doc:
+                lines.append(
+                    f"UNSUPPORTED {file_path.name}: long documents are not supported yet "
+                    f"({convert_result.long_doc_page_count} pages >= {config.get('long_doc_threshold', 20)} threshold)"
+                )
+                continue
+
+            if convert_result.source_path is None or convert_result.file_hash is None:
+                lines.append(f"ERROR {file_path.name}: conversion did not produce a source page")
+                continue
+
+            doc_name = convert_result.doc_name or file_path.stem
+            compile_result = compile_short_doc(doc_name, convert_result.source_path, paths, model)
+            registry.add(
+                convert_result.file_hash,
+                {
+                    "name": file_path.name,
+                    "type": file_path.suffix.lstrip("."),
+                    "doc_name": doc_name,
+                },
             )
-            continue
-
-        if convert_result.source_path is None or convert_result.file_hash is None:
-            lines.append(f"ERROR {file_path.name}: conversion did not produce a source page")
-            continue
-
-        compile_result = compile_short_doc(file_path.stem, convert_result.source_path, paths, model)
-        registry.add(
-            convert_result.file_hash,
-            {
-                "name": file_path.name,
-                "type": file_path.suffix.lstrip("."),
-            },
-        )
-        append_log(paths.wiki_dir, "ingest", file_path.name)
-        lines.append(
-            f"OK {file_path.name}: summary written, created {compile_result.created_concepts}, "
-            f"updated {compile_result.updated_concepts}, related {compile_result.related_concepts}"
-        )
+            append_log(paths.wiki_dir, "ingest", file_path.name)
+            rename_note = ""
+            if doc_name != file_path.stem:
+                rename_note = f" as {doc_name}"
+            lines.append(
+                f"OK {file_path.name}{rename_note}: summary written, created {compile_result.created_concepts}, "
+                f"updated {compile_result.updated_concepts}, related {compile_result.related_concepts}"
+            )
+        except Exception as exc:
+            lines.append(f"ERROR {file_path.name}: {exc}")
 
     return "\n".join(lines)
 
