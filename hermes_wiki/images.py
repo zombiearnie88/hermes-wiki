@@ -13,8 +13,18 @@ _RELATIVE_RE = re.compile(r"!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)")
 _MIN_IMAGE_DIM = 32
 
 
+def load_pymupdf():
+    try:
+        import pymupdf
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "PyMuPDF is required for PDF ingest. Install pymupdf in the runtime environment."
+        ) from exc
+    return pymupdf
+
+
 def convert_pdf_with_images(pdf_path: Path, doc_name: str, images_dir: Path) -> str:
-    import pymupdf
+    pymupdf = load_pymupdf()
 
     images_dir.mkdir(parents=True, exist_ok=True)
     parts: list[str] = []

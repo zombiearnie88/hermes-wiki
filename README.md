@@ -13,8 +13,9 @@ Current scaffold includes:
 - Hermes plugin packaging and registration
 - `wiki init`, `wiki add`, and `wiki status` command surfaces
 - Workspace initialization for `raw/`, `wiki/`, and `.hermeskb/`
-- Short-document conversion pipeline structure
+- Short-document conversion pipeline for markdown, text, csv, pdf, and MarkItDown-backed formats
 - Hermes `AIAgent`-based summary/concept compiler structure
+- Test coverage for workspace commands, conversion paths, compiler writes, and runtime integration
 
 Current v1 boundary:
 
@@ -66,6 +67,54 @@ The donor repositories are tracked as Git submodules so they stay clearly separa
 - `/wiki-init`
 - `/wiki-add <path>`
 - `/wiki-status`
+
+## Installation
+
+### Plugin development install
+
+From this repo:
+
+```bash
+pip install -e .
+```
+
+Hermes should discover the plugin through the `hermes_agent.plugins` entry point.
+
+### Runtime requirements
+
+- Hermes runtime providing `run_agent.AIAgent`
+- `pymupdf` for PDF ingest
+- `markitdown[all]` for `.docx`, `.pptx`, `.xlsx`, `.html`, and related formats
+
+If Hermes is not importable at runtime, generation commands will fail with a clear error.
+
+## Usage
+
+Inside Hermes:
+
+```text
+/wiki-init .
+/wiki-add notes/
+/wiki-status
+```
+
+From Hermes CLI subcommands:
+
+```bash
+hermes wiki init .
+hermes wiki add ./docs
+hermes wiki status
+```
+
+## Development
+
+Run tests locally with the repo virtualenv:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install pytest
+.venv/bin/pytest
+```
 
 ## Development Notes
 

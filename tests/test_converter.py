@@ -3,8 +3,10 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+import builtins
 
 from hermes_wiki.converter import convert_document
+from hermes_wiki.converter import get_pdf_page_count
 from hermes_wiki.workspace import init_workspace, workspace_paths
 
 
@@ -61,3 +63,39 @@ def test_convert_html_uses_markitdown_adapter(tmp_path: Path, monkeypatch) -> No
 
     assert result.doc_name == "page"
     assert result.source_path.read_text(encoding="utf-8") == "# Converted\n"
+
+
+def test_convert_markdown_rewrites_relative_images(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)
+    paths = workspace_paths(workspace_root)
+
+    image_dir = tmp_path / "src"
+    image_dir.mkdir()
+    (image_dir / "figure.png").write_bytes(b"png-bytes")
+    source = image_dir / "article.md"
+    source.write_text("See ![fig](figure.png)", encoding="utf-8")
+
+    result = convert_document(source, paths)
+
+    assert result.source_path is not None
+    assert result.source_path.read_text(encoding="utf-8") == "See ![fig](sources/images/article/figure.png)"
+    assert (workspace_root / "wiki" / "sources" / "images" / "article" / "figure.png").read_bytes() == b"png-bytes"
+
+
+def test_get_pdf_page_count_reports_missing_pymupdf(monkeypatch, tmp_path: Path) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "pymupdf":
+            raise ModuleNotFoundError("No module named 'pymupdf'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    try:
+        get_pdf_page_count(tmp_path / "doc.pdf")
+    except RuntimeError as exc:
+        assert "PyMuPDF is required for PDF ingest" in str(exc)
+    else:
+        raise AssertionError("Expected RuntimeError")

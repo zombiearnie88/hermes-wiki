@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from hermes_wiki.config import load_config
-from hermes_wiki.images import copy_relative_images, convert_pdf_with_images, extract_base64_images
+from hermes_wiki.images import copy_relative_images, convert_pdf_with_images, extract_base64_images, load_pymupdf
 from hermes_wiki.state import HashRegistry
 from hermes_wiki.workspace import WorkspacePaths
 
@@ -82,7 +82,7 @@ def _convert_with_markitdown(src: Path, doc_name: str, images_dir: Path) -> str:
 
 
 def get_pdf_page_count(path: Path) -> int:
-    import pymupdf
+    pymupdf = load_pymupdf()
 
     with pymupdf.open(str(path)) as document:
         return document.page_count
