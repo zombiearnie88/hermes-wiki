@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hermes-wiki"
+version = "0.1.0"
+description = "Hermes plugin for building and maintaining an LLM wiki"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Thach Duong" },
+]
+dependencies = [
+  "json-repair",
+  "markitdown[all]",
+  "pymupdf",
+]
+
+[project.entry-points."hermes_agent.plugins"]
+hermes-wiki = "hermes_wiki"
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_wiki"]

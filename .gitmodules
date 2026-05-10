@@ -1,0 +1,6 @@
+[submodule "code-donor/OpenKB"]
+	path = code-donor/OpenKB
+	url = https://github.com/VectifyAI/OpenKB.git
+[submodule "code-donor/PageIndex"]
+	path = code-donor/PageIndex
+	url = https://github.com/VectifyAI/PageIndex.git
