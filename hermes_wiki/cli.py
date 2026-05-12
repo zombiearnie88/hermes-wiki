@@ -37,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_parser.add_argument("--provider", default=None)
     config_parser.add_argument("--language", default=None)
     config_parser.add_argument("--long-doc-threshold", type=int, default=None)
+    config_parser.add_argument("--concept-generation-concurrency", type=int, default=None)
 
     deps_parser = subcommands.add_parser("deps", help="Inspect or install Hermes wiki runtime dependencies")
     deps_parser.add_argument("--install", choices=["core", "pdf", "office", "all"], default=None)
@@ -64,6 +65,7 @@ def run_args(args: argparse.Namespace) -> str:
             provider=args.provider,
             language=args.language,
             long_doc_threshold=args.long_doc_threshold,
+            concept_generation_concurrency=args.concept_generation_concurrency,
         )
     if args.command == "deps":
         return _run_deps(args.install)

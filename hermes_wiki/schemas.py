@@ -93,7 +93,7 @@ WIKI_CONFIG = {
     "name": "wiki_config",
     "description": (
         "Show or update a Hermes wiki workspace configuration. "
-        "Use this when the user wants to inspect or change the stored default model, provider, language, or long-doc threshold."
+        "Use this when the user wants to inspect or change the stored default model, provider, language, long-doc threshold, or concept generation concurrency."
     ),
     "parameters": {
         "type": "object",
@@ -117,6 +117,10 @@ WIKI_CONFIG = {
             "long_doc_threshold": {
                 "type": "integer",
                 "description": "New page-count threshold for PageIndex long-PDF ingest.",
+            },
+            "concept_generation_concurrency": {
+                "type": "integer",
+                "description": "Bounded concurrent concept generation workers. Values are clamped to 1-8.",
             },
         },
     },

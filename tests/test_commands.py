@@ -38,6 +38,7 @@ def test_run_init_and_status_round_trip(tmp_path: Path) -> None:
     assert "Provider: openai-codex" in status_output
     assert "Language: fr" in status_output
     assert "Long-doc threshold: 12" in status_output
+    assert "Concept generation concurrency: 3" in status_output
     assert "Capabilities:" in status_output
     assert "Dependencies:" in status_output
 
@@ -309,6 +310,7 @@ def test_run_config_reads_and_updates_workspace_config(tmp_path: Path) -> None:
         provider="updated-provider",
         language="fr",
         long_doc_threshold=55,
+        concept_generation_concurrency=3,
     )
 
     assert "Model: initial/model" in before
@@ -318,6 +320,7 @@ def test_run_config_reads_and_updates_workspace_config(tmp_path: Path) -> None:
     assert "Provider: updated-provider" in after
     assert "Language: fr" in after
     assert "Long-doc threshold: 55" in after
+    assert "Concept generation concurrency: 3" in after
 
 
 def test_run_init_rejects_invalid_settings(tmp_path: Path) -> None:

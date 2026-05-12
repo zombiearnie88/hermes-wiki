@@ -43,12 +43,33 @@ def test_generate_conversation_uses_run_agent_aiagent(monkeypatch) -> None:
     assert captured["kwargs"]["quiet_mode"] is True
     assert captured["kwargs"]["skip_memory"] is True
     assert captured["kwargs"]["skip_context_files"] is True
+    assert captured["kwargs"]["max_iterations"] == 1
     assert captured["kwargs"]["ephemeral_system_prompt"] == "system prompt"
     assert "system_message" not in captured["conversation_kwargs"]
     assert captured["conversation_kwargs"]["user_message"] == "user prompt"
     assert captured["conversation_kwargs"]["conversation_history"] == history
     assert captured["conversation_kwargs"]["conversation_history"] is not history
     assert captured["conversation_kwargs"]["task_id"] == "task-1"
+
+
+def test_generate_conversation_constructs_new_aiagent_per_call(monkeypatch) -> None:
+    instances = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            instances.append(self)
+
+        def run_conversation(self, **kwargs) -> dict:
+            return {"final_response": "generated text", "messages": []}
+
+    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
+    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
+
+    generate_conversation("test/model", "test-provider", "first")
+    generate_conversation("test/model", "test-provider", "second")
+
+    assert len(instances) == 2
+    assert instances[0] is not instances[1]
 
 
 def test_generate_text_wraps_conversation(monkeypatch) -> None:

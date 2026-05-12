@@ -93,6 +93,7 @@ def wiki_config(args: dict, **kwargs) -> str:
     provider = args.get("provider") or None
     language = args.get("language") or None
     long_doc_threshold = args.get("long_doc_threshold")
+    concept_generation_concurrency = args.get("concept_generation_concurrency")
 
     try:
         output = _run_config(
@@ -101,6 +102,7 @@ def wiki_config(args: dict, **kwargs) -> str:
             provider=provider,
             language=language,
             long_doc_threshold=long_doc_threshold,
+            concept_generation_concurrency=concept_generation_concurrency,
         )
     except Exception as exc:
         return _failure("wiki_config", str(exc), workspace=workspace)

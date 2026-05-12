@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from .compiler import compile_pageindex_doc, compile_short_doc
-from .config import DEFAULT_CONFIG, load_config, save_config
+from .config import DEFAULT_CONFIG, load_config, normalize_concept_generation_concurrency, save_config
 from .converter import SUPPORTED_EXTENSIONS, convert_document
 from .deps import (
     build_uv_install_command,
@@ -193,6 +193,7 @@ def _format_status() -> str:
             f"Provider: {status.provider}",
             f"Language: {status.language}",
             f"Long-doc threshold: {status.long_doc_threshold}",
+            f"Concept generation concurrency: {status.concept_generation_concurrency}",
             f"Raw files: {status.raw_files}",
             f"Source pages: {status.source_pages}",
             f"Summary pages: {status.summary_pages}",
@@ -233,6 +234,7 @@ def _run_status(workspace_override: str | None) -> str:
             f"Provider: {status.provider}",
             f"Language: {status.language}",
             f"Long-doc threshold: {status.long_doc_threshold}",
+            f"Concept generation concurrency: {status.concept_generation_concurrency}",
             f"Raw files: {status.raw_files}",
             f"Source pages: {status.source_pages}",
             f"Summary pages: {status.summary_pages}",
@@ -321,6 +323,7 @@ def _run_config(
     provider: str | None = None,
     language: str | None = None,
     long_doc_threshold: int | None = None,
+    concept_generation_concurrency: int | None = None,
 ) -> str:
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
@@ -343,6 +346,11 @@ def _run_config(
     if long_doc_threshold is not None:
         config["long_doc_threshold"] = long_doc_threshold
         updated = True
+    if concept_generation_concurrency is not None:
+        config["concept_generation_concurrency"] = normalize_concept_generation_concurrency(
+            concept_generation_concurrency
+        )
+        updated = True
 
     if updated:
         save_config(paths.config_path, config)
@@ -357,6 +365,8 @@ def _run_config(
             f"Provider: {config.get('provider', DEFAULT_CONFIG['provider'])}",
             f"Language: {config.get('language', DEFAULT_CONFIG['language'])}",
             f"Long-doc threshold: {config.get('long_doc_threshold', DEFAULT_CONFIG['long_doc_threshold'])}",
+            "Concept generation concurrency: "
+            f"{config.get('concept_generation_concurrency', DEFAULT_CONFIG['concept_generation_concurrency'])}",
         ]
     )
     return "\n".join(lines)
@@ -504,6 +514,7 @@ def _build_config_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=None)
     parser.add_argument("--language", default=None)
     parser.add_argument("--long-doc-threshold", type=int, default=None)
+    parser.add_argument("--concept-generation-concurrency", type=int, default=None)
     parser.add_argument("-h", "--help", action="store_true")
     return parser
 
@@ -573,9 +584,9 @@ def handle_wiki_config_command(raw_args: str) -> str:
     try:
         args = parser.parse_args(shlex.split(raw_args))
     except SystemExit:
-        return "Usage: /wiki-config [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N]"
+        return "Usage: /wiki-config [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N] [--concept-generation-concurrency N]"
     if args.help:
-        return "Usage: /wiki-config [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N]"
+        return "Usage: /wiki-config [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N] [--concept-generation-concurrency N]"
     try:
         return _run_config(
             args.workspace,
@@ -583,6 +594,7 @@ def handle_wiki_config_command(raw_args: str) -> str:
             provider=args.provider,
             language=args.language,
             long_doc_threshold=args.long_doc_threshold,
+            concept_generation_concurrency=args.concept_generation_concurrency,
         )
     except Exception as exc:
         return f"Failed to update config: {exc}"
@@ -645,6 +657,7 @@ def setup_wiki_cli(subparser) -> None:
     config_parser.add_argument("--provider", default=None)
     config_parser.add_argument("--language", default=None)
     config_parser.add_argument("--long-doc-threshold", type=int, default=None)
+    config_parser.add_argument("--concept-generation-concurrency", type=int, default=None)
 
     deps_parser = subcommands.add_parser("deps", help="Inspect or install Hermes wiki runtime dependencies")
     deps_parser.add_argument("--install", choices=install_groups(), default=None)
@@ -669,6 +682,7 @@ def handle_wiki_cli(args) -> None:
                 provider=args.provider,
                 language=args.language,
                 long_doc_threshold=args.long_doc_threshold,
+                concept_generation_concurrency=args.concept_generation_concurrency,
             )
         elif args.wiki_command == "deps":
             output = _run_deps(args.install)

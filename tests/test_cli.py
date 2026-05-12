@@ -121,6 +121,8 @@ def test_run_args_config_updates_workspace(tmp_path: Path) -> None:
                 "it",
                 "--long-doc-threshold",
                 "77",
+                "--concept-generation-concurrency",
+                "3",
             ]
         )
     )
@@ -130,6 +132,7 @@ def test_run_args_config_updates_workspace(tmp_path: Path) -> None:
     assert "Provider: updated-provider" in output
     assert "Language: it" in output
     assert "Long-doc threshold: 77" in output
+    assert "Concept generation concurrency: 3" in output
 
 
 def test_run_args_list_reads_workspace(tmp_path: Path) -> None:

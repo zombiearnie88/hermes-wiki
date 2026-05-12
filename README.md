@@ -17,7 +17,7 @@ Current capabilities include:
 - Short-document conversion pipeline for markdown, text, csv, pdf, and MarkItDown-backed formats
 - PageIndex-backed long-PDF ingest above `long_doc_threshold`
 - Guarded long-document retrieval tools for document structure and selected page ranges
-- Hermes `AIAgent`-based summary/concept compiler structure
+- Hermes `AIAgent`-based summary/concept compiler with opt-in bounded concurrent concept generation
 - Test coverage for workspace commands, conversion paths, compiler writes, and runtime integration
 
 Current boundary:
@@ -26,7 +26,8 @@ Current boundary:
 - long Markdown and MarkItDown-backed long documents are still deferred
 - retrieval is through Hermes wiki tools, not a separate PageIndex chat surface
 
-See `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md` for the detailed implementation plan.
+See `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md` for the PageIndex implementation plan.
+See `plans/AIAGENT_CONCURRENT_CONCEPT_GENERATION_PLAN.md` for the concurrent concept generation design.
 
 ## Workspace Layout
 
@@ -58,7 +59,7 @@ The root `AGENTS.md` guides Hermes agents when answering questions from the wiki
 - `code-donor/OpenKB/` - donor reference for short-doc wiki workflow
 - `code-donor/PageIndex/` - donor reference for future long-doc support
 - `AGENTS.md` - repo guidance and implementation rules
-- `plans/` - implementation and patch plans, including `IMPLEMENTATION_PLAN.md`
+- `plans/` - implementation and patch plans, including `IMPLEMENTATION_PLAN.md` and compiler concurrency plans
 
 ## Donor Strategy
 
@@ -194,6 +195,7 @@ hermes-wiki deps --install all
 `wiki add` uses the persisted `model` and `provider` from `.hermeskb/config.yaml` by default.
 It also accepts one-off `--model`, `--provider`, and `--language` overrides without rewriting workspace config.
 `wiki config` updates the persisted workspace configuration in `.hermeskb/config.yaml`.
+`concept_generation_concurrency` defaults to `3` for bounded concurrent concept page generation. Values are clamped to `1..8`; set it to `1` to force serial concept generation.
 
 For the repo-local Docker ChatGPT/Codex setup, configure generation with unprefixed Codex model IDs:
 
@@ -202,6 +204,7 @@ model: gpt-5.4-mini
 provider: openai-codex
 language: en
 long_doc_threshold: 20
+concept_generation_concurrency: 3
 pageindex_toc_check_pages: 20
 pageindex_max_pages_per_node: 10
 pageindex_max_tokens_per_node: 20000

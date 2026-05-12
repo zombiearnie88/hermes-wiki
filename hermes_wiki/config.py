@@ -3,11 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+CONCEPT_GENERATION_CONCURRENCY_DEFAULT = 3
+CONCEPT_GENERATION_CONCURRENCY_MAX = 8
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "provider": "openai-codex",
     "language": "en",
     "long_doc_threshold": 20,
+    "concept_generation_concurrency": CONCEPT_GENERATION_CONCURRENCY_DEFAULT,
     "pageindex_toc_check_pages": 20,
     "pageindex_max_pages_per_node": 10,
     "pageindex_max_tokens_per_node": 20000,
@@ -37,6 +41,14 @@ def _dump_scalar(value: Any) -> str:
     return str(value)
 
 
+def normalize_concept_generation_concurrency(value: Any) -> int:
+    try:
+        concurrency = int(value)
+    except (TypeError, ValueError):
+        return CONCEPT_GENERATION_CONCURRENCY_DEFAULT
+    return max(1, min(concurrency, CONCEPT_GENERATION_CONCURRENCY_MAX))
+
+
 def load_config(config_path: Path) -> dict[str, Any]:
     config = dict(DEFAULT_CONFIG)
     if config_path.exists():
@@ -48,6 +60,9 @@ def load_config(config_path: Path) -> dict[str, Any]:
             key, value = line.split(":", 1)
             data[key.strip()] = _parse_scalar(value)
         config.update(data)
+    config["concept_generation_concurrency"] = normalize_concept_generation_concurrency(
+        config.get("concept_generation_concurrency")
+    )
     return config
 
 

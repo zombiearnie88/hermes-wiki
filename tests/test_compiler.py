@@ -173,6 +173,238 @@ def test_compile_short_doc_updates_existing_concept_sources(tmp_path: Path, monk
     assert "# Summary\nBody" not in calls[2]["user_message"]
     assert "Document summary:" not in calls[2]["user_message"]
     assert "Old body" in calls[2]["user_message"]
+    assert calls[2]["task_id"] == "wiki:doc:concept:update:attention"
+
+
+def test_compile_short_doc_generates_concepts_with_task_ids_and_serial_writes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)
+    paths = workspace_paths(workspace_root)
+    paths.config_path.write_text(
+        "model: test/model\nprovider: test-provider\nlanguage: en\nlong_doc_threshold: 20\nconcept_generation_concurrency: 3\n",
+        encoding="utf-8",
+    )
+
+    source_path = paths.wiki_dir / "sources" / "doc.md"
+    source_path.write_text("Example source text", encoding="utf-8")
+    calls = []
+    events = []
+
+    def fake_generate_conversation(
+        model: str,
+        provider: str | None,
+        user_message: str,
+        *,
+        system_message: str | None = None,
+        conversation_history: list[dict] | None = None,
+        task_id: str | None = None,
+    ) -> GenerationResult:
+        calls.append({"user_message": user_message, "conversation_history": conversation_history, "task_id": task_id})
+        if system_message is not None:
+            return GenerationResult(
+                final_response=json.dumps({"brief": "Short brief", "content": "# Summary\nBody"}),
+                messages=[],
+            )
+        if task_id is None:
+            return GenerationResult(
+                final_response=json.dumps(
+                    {
+                        "create": [
+                            {"name": "alpha", "title": "Alpha"},
+                            {"name": "beta", "title": "Beta"},
+                        ],
+                        "update": [],
+                        "related": [],
+                    }
+                ),
+                messages=[],
+            )
+        events.append(f"generate:{task_id}")
+        slug = task_id.rsplit(":", 1)[-1]
+        return GenerationResult(
+            final_response=json.dumps({"brief": f"{slug} brief", "content": f"# {slug}\nBody"}),
+            messages=[],
+        )
+
+    original_write_concept = compiler._write_concept
+
+    def tracking_write_concept(*args, **kwargs):
+        events.append(f"write:{args[1]}")
+        original_write_concept(*args, **kwargs)
+
+    monkeypatch.setattr(compiler, "_generate_conversation", fake_generate_conversation)
+    monkeypatch.setattr(compiler, "_parse_json", lambda text: json.loads(text))
+    monkeypatch.setattr(compiler, "_write_concept", tracking_write_concept)
+
+    result = compiler.compile_short_doc("doc", source_path, paths, "test/model", "test-provider")
+
+    task_ids = [call["task_id"] for call in calls if call["task_id"]]
+    generate_indexes = [index for index, event in enumerate(events) if event.startswith("generate:")]
+    write_indexes = [index for index, event in enumerate(events) if event.startswith("write:")]
+    assert result.created_concepts == 2
+    assert set(task_ids) == {
+        "wiki:doc:concept:create:alpha",
+        "wiki:doc:concept:create:beta",
+    }
+    assert max(generate_indexes) < min(write_indexes)
+    assert (paths.wiki_dir / "concepts" / "alpha.md").exists()
+    assert (paths.wiki_dir / "concepts" / "beta.md").exists()
+
+
+def test_compile_short_doc_generates_duplicate_sanitized_slugs_once(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)
+    paths = workspace_paths(workspace_root)
+    source_path = paths.wiki_dir / "sources" / "doc.md"
+    source_path.write_text("Example source text", encoding="utf-8")
+    task_ids = []
+
+    def fake_generate_conversation(
+        model: str,
+        provider: str | None,
+        user_message: str,
+        *,
+        system_message: str | None = None,
+        conversation_history: list[dict] | None = None,
+        task_id: str | None = None,
+    ) -> GenerationResult:
+        if system_message is not None:
+            return GenerationResult(
+                final_response=json.dumps({"brief": "Short brief", "content": "# Summary\nBody"}),
+                messages=[],
+            )
+        if task_id is None:
+            return GenerationResult(
+                final_response=json.dumps(
+                    {
+                        "create": [
+                            {"name": "attention!", "title": "Attention"},
+                            {"name": "attention", "title": "Duplicate Attention"},
+                        ],
+                        "update": [{"name": "attention", "title": "Attention"}],
+                        "related": [],
+                    }
+                ),
+                messages=[],
+            )
+        task_ids.append(task_id)
+        return GenerationResult(
+            final_response=json.dumps({"brief": "Concept brief", "content": "# Attention\nBody"}),
+            messages=[],
+        )
+
+    monkeypatch.setattr(compiler, "_generate_conversation", fake_generate_conversation)
+    monkeypatch.setattr(compiler, "_parse_json", lambda text: json.loads(text))
+
+    result = compiler.compile_short_doc("doc", source_path, paths, "test/model", "test-provider")
+
+    assert result.created_concepts == 1
+    assert result.updated_concepts == 0
+    assert task_ids == ["wiki:doc:concept:create:attention"]
+    assert (paths.wiki_dir / "concepts" / "attention.md").exists()
+
+
+def test_compile_short_doc_skips_failed_concept_generation_future(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)
+    paths = workspace_paths(workspace_root)
+    paths.config_path.write_text(
+        "model: test/model\nprovider: test-provider\nlanguage: en\nlong_doc_threshold: 20\nconcept_generation_concurrency: 2\n",
+        encoding="utf-8",
+    )
+    source_path = paths.wiki_dir / "sources" / "doc.md"
+    source_path.write_text("Example source text", encoding="utf-8")
+
+    def fake_generate_conversation(
+        model: str,
+        provider: str | None,
+        user_message: str,
+        *,
+        system_message: str | None = None,
+        conversation_history: list[dict] | None = None,
+        task_id: str | None = None,
+    ) -> GenerationResult:
+        if system_message is not None:
+            return GenerationResult(
+                final_response=json.dumps({"brief": "Short brief", "content": "# Summary\nBody"}),
+                messages=[],
+            )
+        if task_id is None:
+            return GenerationResult(
+                final_response=json.dumps(
+                    {
+                        "create": [
+                            {"name": "good", "title": "Good"},
+                            {"name": "bad", "title": "Bad"},
+                        ],
+                        "update": [],
+                        "related": [],
+                    }
+                ),
+                messages=[],
+            )
+        if task_id.endswith(":bad"):
+            raise RuntimeError("concept failed")
+        return GenerationResult(
+            final_response=json.dumps({"brief": "Good brief", "content": "# Good\nBody"}),
+            messages=[],
+        )
+
+    monkeypatch.setattr(compiler, "_generate_conversation", fake_generate_conversation)
+    monkeypatch.setattr(compiler, "_parse_json", lambda text: json.loads(text))
+
+    result = compiler.compile_short_doc("doc", source_path, paths, "test/model", "test-provider")
+
+    assert result.created_concepts == 1
+    assert (paths.wiki_dir / "concepts" / "good.md").exists()
+    assert not (paths.wiki_dir / "concepts" / "bad.md").exists()
+
+
+def test_compile_short_doc_related_links_remain_serial_code_updates(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)
+    paths = workspace_paths(workspace_root)
+    source_path = paths.wiki_dir / "sources" / "doc.md"
+    source_path.write_text("Example source text", encoding="utf-8")
+    concept_path = paths.wiki_dir / "concepts" / "attention.md"
+    concept_path.write_text("---\nbrief: Existing brief\n---\n\n# Attention\nOld body\n", encoding="utf-8")
+
+    calls = []
+
+    def fake_generate_conversation(
+        model: str,
+        provider: str | None,
+        user_message: str,
+        *,
+        system_message: str | None = None,
+        conversation_history: list[dict] | None = None,
+        task_id: str | None = None,
+    ) -> GenerationResult:
+        calls.append(task_id)
+        if system_message is not None:
+            return GenerationResult(
+                final_response=json.dumps({"brief": "Short brief", "content": "# Summary\nBody"}),
+                messages=[],
+            )
+        return GenerationResult(
+            final_response=json.dumps({"create": [], "update": [], "related": ["attention"]}),
+            messages=[],
+        )
+
+    monkeypatch.setattr(compiler, "_generate_conversation", fake_generate_conversation)
+    monkeypatch.setattr(compiler, "_parse_json", lambda text: json.loads(text))
+
+    result = compiler.compile_short_doc("doc", source_path, paths, "test/model", "test-provider")
+
+    concept_text = concept_path.read_text(encoding="utf-8")
+    summary_text = (paths.wiki_dir / "summaries" / "doc.md").read_text(encoding="utf-8")
+    assert result.related_concepts == 1
+    assert calls == [None, None]
+    assert "sources: [summaries/doc.md]" in concept_text
+    assert "See also: [[summaries/doc]]" in concept_text
+    assert "[[concepts/attention]]" in summary_text
 
 
 def test_generate_conversation_propagates_runtime_error(monkeypatch) -> None:

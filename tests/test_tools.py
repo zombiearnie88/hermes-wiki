@@ -146,12 +146,14 @@ def test_wiki_config_passes_overrides(monkeypatch) -> None:
         provider: str | None = None,
         language: str | None = None,
         long_doc_threshold: int | None = None,
+        concept_generation_concurrency: int | None = None,
     ) -> str:
         captured["workspace"] = workspace_override
         captured["model"] = model
         captured["provider"] = provider
         captured["language"] = language
         captured["long_doc_threshold"] = long_doc_threshold
+        captured["concept_generation_concurrency"] = concept_generation_concurrency
         return "Updated workspace config."
 
     monkeypatch.setattr(plugin_tools, "_run_config", fake_run_config)
@@ -164,6 +166,7 @@ def test_wiki_config_passes_overrides(monkeypatch) -> None:
                 "provider": "override-provider",
                 "language": "de",
                 "long_doc_threshold": 7,
+                "concept_generation_concurrency": 3,
             }
         )
     )
@@ -175,6 +178,7 @@ def test_wiki_config_passes_overrides(monkeypatch) -> None:
         "provider": "override-provider",
         "language": "de",
         "long_doc_threshold": 7,
+        "concept_generation_concurrency": 3,
     }
 
 

@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import load_config
 from .pageindex.builder import build_or_load_pageindex
 from .pageindex.tree import render_tree
-from .runtime import GenerationResult, generate_conversation, generate_text
+from .runtime import GenerationResult, HermesRuntimeError, generate_conversation, generate_text
 from .schema import get_schema_md
 from .workspace import WorkspacePaths
 
@@ -112,6 +113,22 @@ class CompileResult:
     created_concepts: int
     updated_concepts: int
     related_concepts: int
+
+
+@dataclass(frozen=True)
+class ConceptGenerationTask:
+    action: str
+    name: str
+    safe_name: str
+    title: str
+    user_message: str
+
+
+@dataclass(frozen=True)
+class ConceptGenerationResult:
+    task: ConceptGenerationTask
+    brief: str
+    content: str
 
 
 def _generate_text(model: str, provider: str | None, system_prompt: str, user_prompt: str) -> str:
@@ -293,6 +310,161 @@ def _write_concept(
     path.write_text(frontmatter + content, encoding="utf-8")
 
 
+def _read_existing_concept_content(wiki_dir: Path, safe_name: str) -> str:
+    concept_path = wiki_dir / "concepts" / f"{safe_name}.md"
+    if not concept_path.exists():
+        return "(page not found - create from scratch)"
+
+    raw_text = concept_path.read_text(encoding="utf-8")
+    if raw_text.startswith("---"):
+        parts = raw_text.split("---", 2)
+        return parts[2].strip() if len(parts) >= 3 else raw_text
+    return raw_text
+
+
+def _prepare_concept_generation_tasks(
+    wiki_dir: Path,
+    doc_name: str,
+    create_items: list,
+    update_items: list,
+) -> list[ConceptGenerationTask]:
+    tasks: list[ConceptGenerationTask] = []
+    seen_slugs: set[str] = set()
+
+    for concept in create_items:
+        if not isinstance(concept, dict) or "name" not in concept:
+            continue
+        name = str(concept["name"])
+        safe_name = _sanitize_concept_name(name)
+        if safe_name in seen_slugs:
+            continue
+        seen_slugs.add(safe_name)
+        title = str(concept.get("title", name))
+        tasks.append(
+            ConceptGenerationTask(
+                action="create",
+                name=name,
+                safe_name=safe_name,
+                title=title,
+                user_message=_CONCEPT_PAGE_USER.format(doc_name=doc_name, title=title),
+            )
+        )
+
+    for concept in update_items:
+        if not isinstance(concept, dict) or "name" not in concept:
+            continue
+        name = str(concept["name"])
+        safe_name = _sanitize_concept_name(name)
+        if safe_name in seen_slugs:
+            continue
+        seen_slugs.add(safe_name)
+        title = str(concept.get("title", name))
+        existing_content = _read_existing_concept_content(wiki_dir, safe_name)
+        tasks.append(
+            ConceptGenerationTask(
+                action="update",
+                name=name,
+                safe_name=safe_name,
+                title=title,
+                user_message=_CONCEPT_UPDATE_USER.format(
+                    doc_name=doc_name,
+                    title=title,
+                    existing_content=existing_content,
+                ),
+            )
+        )
+
+    return tasks
+
+
+def _parse_concept_page_response(raw: str) -> tuple[str, str]:
+    try:
+        parsed_page = _parse_json(raw)
+        if isinstance(parsed_page, dict):
+            return str(parsed_page.get("brief", "")), str(parsed_page.get("content", raw))
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return "", raw
+
+
+def _generate_concept_task(
+    task: ConceptGenerationTask,
+    *,
+    doc_name: str,
+    model: str,
+    provider: str | None,
+    base_history: list[dict],
+) -> ConceptGenerationResult:
+    result = _generate_conversation(
+        model,
+        provider,
+        task.user_message,
+        conversation_history=base_history,
+        task_id=f"wiki:{doc_name}:concept:{task.action}:{task.safe_name}",
+    )
+    brief, page_content = _parse_concept_page_response(result.final_response)
+    return ConceptGenerationResult(task=task, brief=brief, content=page_content)
+
+
+def _generate_concept_tasks(
+    tasks: list[ConceptGenerationTask],
+    *,
+    doc_name: str,
+    model: str,
+    provider: str | None,
+    base_history: list[dict],
+    max_concurrency: int,
+) -> list[ConceptGenerationResult]:
+    if not tasks:
+        return []
+
+    max_workers = max(1, min(max_concurrency, len(tasks)))
+    results: list[ConceptGenerationResult] = []
+    errors: list[Exception] = []
+
+    if max_workers == 1:
+        for task in tasks:
+            try:
+                results.append(
+                    _generate_concept_task(
+                        task,
+                        doc_name=doc_name,
+                        model=model,
+                        provider=provider,
+                        base_history=base_history,
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    _generate_concept_task,
+                    task,
+                    doc_name=doc_name,
+                    model=model,
+                    provider=provider,
+                    base_history=base_history,
+                )
+                for task in tasks
+            ]
+            for future in futures:
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
+
+    if not results and errors and len(errors) == len(tasks):
+        first = errors[0]
+        if isinstance(first, HermesRuntimeError) and all(
+            type(error) is type(first) and str(error) == str(first) for error in errors
+        ):
+            raise first
+    return results
+
+
 def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
     for index, line in enumerate(lines):
         if line == heading:
@@ -451,6 +623,7 @@ def _compile_concepts_from_summary(
     summary: str,
     doc_brief: str,
     doc_type: str,
+    concept_generation_concurrency: int,
 ) -> CompileResult:
     wiki_dir = paths.wiki_dir
     base_history = [
@@ -485,9 +658,9 @@ def _compile_concepts_from_summary(
             "related": parsed.get("related", []),
         }
 
-    create_items = plan["create"]
-    update_items = plan["update"]
-    related_items = plan["related"]
+    create_items = plan["create"] if isinstance(plan["create"], list) else []
+    update_items = plan["update"] if isinstance(plan["update"], list) else []
+    related_items = plan["related"] if isinstance(plan["related"], list) else []
     if not create_items and not update_items and not related_items:
         _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return CompileResult(doc_brief=doc_brief, created_concepts=0, updated_concepts=0, related_concepts=0)
@@ -498,80 +671,27 @@ def _compile_concepts_from_summary(
     created_count = 0
     updated_count = 0
 
-    for concept in create_items:
-        if not isinstance(concept, dict) or "name" not in concept:
-            continue
-        name = str(concept["name"])
-        title = str(concept.get("title", name))
-        result = _generate_conversation(
-            model,
-            provider,
-            _CONCEPT_PAGE_USER.format(doc_name=doc_name, title=title),
-            conversation_history=base_history,
-        )
-        raw = result.final_response
-        try:
-            parsed_page = _parse_json(raw)
-            if isinstance(parsed_page, dict):
-                brief = str(parsed_page.get("brief", ""))
-                page_content = str(parsed_page.get("content", raw))
-            else:
-                brief = ""
-                page_content = raw
-        except (json.JSONDecodeError, ValueError):
-            brief = ""
-            page_content = raw
-        _write_concept(wiki_dir, name, page_content, source_file, False, brief=brief)
-        safe_name = _sanitize_concept_name(name)
-        concept_names.append(safe_name)
-        created_count += 1
-        if brief:
-            concept_briefs_map[safe_name] = brief
+    concept_tasks = _prepare_concept_generation_tasks(wiki_dir, doc_name, create_items, update_items)
+    concept_results = _generate_concept_tasks(
+        concept_tasks,
+        doc_name=doc_name,
+        model=model,
+        provider=provider,
+        base_history=base_history,
+        max_concurrency=concept_generation_concurrency,
+    )
 
-    for concept in update_items:
-        if not isinstance(concept, dict) or "name" not in concept:
-            continue
-        name = str(concept["name"])
-        title = str(concept.get("title", name))
-        concept_path = wiki_dir / "concepts" / f"{_sanitize_concept_name(name)}.md"
-        if concept_path.exists():
-            raw_text = concept_path.read_text(encoding="utf-8")
-            if raw_text.startswith("---"):
-                parts = raw_text.split("---", 2)
-                existing_content = parts[2].strip() if len(parts) >= 3 else raw_text
-            else:
-                existing_content = raw_text
+    for concept_result in concept_results:
+        task = concept_result.task
+        is_update = task.action == "update"
+        _write_concept(wiki_dir, task.name, concept_result.content, source_file, is_update, brief=concept_result.brief)
+        concept_names.append(task.safe_name)
+        if is_update:
+            updated_count += 1
         else:
-            existing_content = "(page not found - create from scratch)"
-
-        result = _generate_conversation(
-            model,
-            provider,
-            _CONCEPT_UPDATE_USER.format(
-                doc_name=doc_name,
-                title=title,
-                existing_content=existing_content,
-            ),
-            conversation_history=base_history,
-        )
-        raw = result.final_response
-        try:
-            parsed_page = _parse_json(raw)
-            if isinstance(parsed_page, dict):
-                brief = str(parsed_page.get("brief", ""))
-                page_content = str(parsed_page.get("content", raw))
-            else:
-                brief = ""
-                page_content = raw
-        except (json.JSONDecodeError, ValueError):
-            brief = ""
-            page_content = raw
-        _write_concept(wiki_dir, name, page_content, source_file, True, brief=brief)
-        safe_name = _sanitize_concept_name(name)
-        concept_names.append(safe_name)
-        updated_count += 1
-        if brief:
-            concept_briefs_map[safe_name] = brief
+            created_count += 1
+        if concept_result.brief:
+            concept_briefs_map[task.safe_name] = concept_result.brief
 
     sanitized_related = [_sanitize_concept_name(str(item)) for item in related_items]
     for slug in sanitized_related:
@@ -644,6 +764,7 @@ def compile_short_doc(
         summary=summary,
         doc_brief=doc_brief,
         doc_type="short",
+        concept_generation_concurrency=int(config.get("concept_generation_concurrency", 1)),
     )
 
 
@@ -719,4 +840,5 @@ def compile_pageindex_doc(
         summary=summary,
         doc_brief=doc_brief,
         doc_type="pageindex",
+        concept_generation_concurrency=int(config.get("concept_generation_concurrency", 1)),
     )

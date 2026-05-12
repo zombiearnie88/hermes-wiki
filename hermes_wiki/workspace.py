@@ -63,6 +63,7 @@ class WorkspaceStatus:
     provider: str
     language: str
     long_doc_threshold: int
+    concept_generation_concurrency: int
     raw_files: int
     source_pages: int
     summary_pages: int
@@ -156,6 +157,9 @@ def read_workspace_status(paths: WorkspacePaths) -> WorkspaceStatus:
         provider=str(config.get("provider", DEFAULT_CONFIG["provider"])),
         language=str(config.get("language", DEFAULT_CONFIG["language"])),
         long_doc_threshold=int(config.get("long_doc_threshold", DEFAULT_CONFIG["long_doc_threshold"])),
+        concept_generation_concurrency=int(
+            config.get("concept_generation_concurrency", DEFAULT_CONFIG["concept_generation_concurrency"])
+        ),
         raw_files=raw_files,
         source_pages=source_pages,
         summary_pages=summary_pages,
