@@ -6,10 +6,10 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from hermes_wiki.config import load_config
-from hermes_wiki.runtime import generate_text
-from hermes_wiki.schema import get_agents_md
-from hermes_wiki.workspace import WorkspacePaths
+from .config import load_config
+from .runtime import GenerationResult, generate_conversation, generate_text
+from .schema import get_agents_md
+from .workspace import WorkspacePaths
 
 _SYSTEM_TEMPLATE = """\
 You are Hermes Wiki's compilation agent for a personal knowledge base.
@@ -38,8 +38,7 @@ Return ONLY valid JSON, no fences.
 _CONCEPTS_PLAN_USER = """\
 Document name: {doc_name}
 
-Document summary:
-{summary}
+Based on the summary above, decide how to update the wiki's concept pages.
 
 Existing concept pages:
 {concept_briefs}
@@ -66,10 +65,7 @@ Return ONLY valid JSON, no fences, no explanation.
 _CONCEPT_PAGE_USER = """\
 Document name: {doc_name}
 
-Document summary:
-{summary}
-
-Write the concept page for: {title}
+Based on the summary above, write the concept page for: {title}
 
 Return a JSON object with two keys:
 - "brief": A single sentence under 100 characters defining this concept
@@ -81,10 +77,7 @@ Return ONLY valid JSON, no fences.
 _CONCEPT_UPDATE_USER = """\
 Document name: {doc_name}
 
-Document summary:
-{summary}
-
-Update the concept page for: {title}
+Based on the summary above, update the concept page for: {title}
 
 Current content of this page:
 {existing_content}
@@ -109,12 +102,36 @@ class CompileResult:
     related_concepts: int
 
 
-def _generate_text(model: str, system_prompt: str, user_prompt: str) -> str:
-    return generate_text(model, system_prompt, user_prompt)
+def _generate_text(model: str, provider: str | None, system_prompt: str, user_prompt: str) -> str:
+    return generate_text(model, provider, system_prompt, user_prompt)
+
+
+def _generate_conversation(
+    model: str,
+    provider: str | None,
+    user_message: str,
+    *,
+    system_message: str | None = None,
+    conversation_history: list[dict] | None = None,
+    task_id: str | None = None,
+) -> GenerationResult:
+    return generate_conversation(
+        model,
+        provider,
+        user_message,
+        system_message=system_message,
+        conversation_history=conversation_history,
+        task_id=task_id,
+    )
 
 
 def _parse_json(text: str) -> list | dict:
-    from json_repair import repair_json
+    try:
+        from json_repair import repair_json
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "json-repair is required to parse compiler responses. Install json-repair in the runtime environment."
+        ) from exc
 
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -397,19 +414,30 @@ def _update_index(
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, model: str) -> CompileResult:
+def compile_short_doc(
+    doc_name: str,
+    source_path: Path,
+    paths: WorkspacePaths,
+    model: str,
+    provider: str | None,
+    *,
+    language_override: str | None = None,
+) -> CompileResult:
     config = load_config(paths.config_path)
-    language = str(config.get("language", "en"))
+    language = language_override or str(config.get("language", "en"))
     wiki_dir = paths.wiki_dir
     schema_md = get_agents_md(wiki_dir)
     content = source_path.read_text(encoding="utf-8")
     system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
 
-    summary_raw = _generate_text(
+    summary_user = _SUMMARY_USER.format(doc_name=doc_name, content=content)
+    summary_result = _generate_conversation(
         model,
-        system_prompt,
-        _SUMMARY_USER.format(doc_name=doc_name, content=content),
+        provider,
+        summary_user,
+        system_message=system_prompt,
     )
+    summary_raw = summary_result.final_response
     try:
         summary_parsed = _parse_json(summary_raw)
         if isinstance(summary_parsed, dict):
@@ -422,17 +450,23 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
         doc_brief = ""
         summary = summary_raw
     _write_summary(wiki_dir, doc_name, summary)
+    base_history = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": summary_user},
+        {"role": "assistant", "content": summary},
+    ]
 
     concept_briefs_text = _read_concept_briefs(wiki_dir)
-    plan_raw = _generate_text(
+    plan_result = _generate_conversation(
         model,
-        system_prompt,
+        provider,
         _CONCEPTS_PLAN_USER.format(
             doc_name=doc_name,
-            summary=summary,
             concept_briefs=concept_briefs_text,
         ),
+        conversation_history=base_history,
     )
+    plan_raw = plan_result.final_response
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError):
@@ -466,11 +500,13 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
             continue
         name = str(concept["name"])
         title = str(concept.get("title", name))
-        raw = _generate_text(
+        result = _generate_conversation(
             model,
-            system_prompt,
-            _CONCEPT_PAGE_USER.format(doc_name=doc_name, summary=summary, title=title),
+            provider,
+            _CONCEPT_PAGE_USER.format(doc_name=doc_name, title=title),
+            conversation_history=base_history,
         )
+        raw = result.final_response
         try:
             parsed_page = _parse_json(raw)
             if isinstance(parsed_page, dict):
@@ -505,16 +541,17 @@ def compile_short_doc(doc_name: str, source_path: Path, paths: WorkspacePaths, m
         else:
             existing_content = "(page not found - create from scratch)"
 
-        raw = _generate_text(
+        result = _generate_conversation(
             model,
-            system_prompt,
+            provider,
             _CONCEPT_UPDATE_USER.format(
                 doc_name=doc_name,
-                summary=summary,
                 title=title,
                 existing_content=existing_content,
             ),
+            conversation_history=base_history,
         )
+        raw = result.final_response
         try:
             parsed_page = _parse_json(raw)
             if isinstance(parsed_page, dict):

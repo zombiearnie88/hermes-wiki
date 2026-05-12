@@ -1,0 +1,3 @@
+json-repair
+pymupdf
+markitdown[all]

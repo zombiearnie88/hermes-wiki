@@ -1,0 +1,76 @@
+# Default stack: one Hermes Agent runtime container using the clinic profile
+# home at ./data/hermes-home/profiles/clinic, kept alive for manual
+# `docker compose exec` sessions, plus one Hermes WebUI instance.
+
+services:
+  hermes-agent-src-init:
+    image: nousresearch/hermes-agent:latest
+    restart: "no"
+    command: version
+    volumes:
+      - hermes-agent-src:/opt/hermes
+    networks:
+      - ai-internal
+
+  hermes-clinic:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-clinic
+    restart: unless-stopped
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -lc
+      - |
+        uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt
+        /opt/hermes/.venv/bin/hermes plugins enable hermes-wiki
+        exec sleep infinity
+    shm_size: ${HERMES_SHM_SIZE}
+    volumes:
+      - ./data/hermes-home:/opt/data
+      - hermes-agent-src:/opt/hermes
+      - ../hermes_wiki:/opt/data/profiles/clinic/plugins/hermes-wiki:ro
+    environment:
+      HERMES_HOME: /opt/data/profiles/clinic
+      HERMES_UID: ${HERMES_UID}
+      HERMES_GID: ${HERMES_GID}
+    networks:
+      - ai-internal
+
+  hermes-webui:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    container_name: hermes-webui
+    restart: unless-stopped
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+      hermes-clinic:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${HERMES_WEBUI_PORT}:8787"
+    volumes:
+      - ./data/hermes-home/profiles/clinic:/home/hermeswebui/.hermes
+      - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
+      - ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki
+      - ./data/hermes-home/profiles/clinic/workspace:/workspace
+      - ./data/hermes-home/profiles/clinic/workspace:/opt/data/profiles/clinic/workspace
+    environment:
+      HERMES_HOME: /home/hermeswebui/.hermes
+      HERMES_CONFIG_PATH: /home/hermeswebui/.hermes/config.yaml
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: "8787"
+      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui_state
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+      WANTED_UID: ${HERMES_UID}
+      WANTED_GID: ${HERMES_GID}
+      HERMES_SKIP_CHMOD: "1"
+    networks:
+      - ai-internal
+
+networks:
+  ai-internal:
+    driver: bridge
+
+volumes:
+  hermes-agent-src:

@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "model": "anthropic/claude-sonnet-4",
+    "model": "gpt-5.4-mini",
+    "provider": "openai-codex",
     "language": "en",
     "long_doc_threshold": 20,
 }

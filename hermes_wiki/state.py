@@ -11,8 +11,11 @@ class HashRegistry:
     def __init__(self, path: Path) -> None:
         self._path = path
         if path.exists():
-            with path.open("r", encoding="utf-8") as handle:
-                self._data: dict[str, dict] = json.load(handle)
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    self._data: dict[str, dict] = json.load(handle)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Hash registry is corrupt: {path}") from exc
         else:
             self._data = {}
 

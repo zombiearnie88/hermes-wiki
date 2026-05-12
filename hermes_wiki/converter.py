@@ -4,10 +4,10 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from hermes_wiki.config import load_config
-from hermes_wiki.images import copy_relative_images, convert_pdf_with_images, extract_base64_images, load_pymupdf
-from hermes_wiki.state import HashRegistry
-from hermes_wiki.workspace import WorkspacePaths
+from .config import load_config
+from .images import copy_relative_images, convert_pdf_with_images, extract_base64_images, load_pymupdf
+from .state import HashRegistry
+from .workspace import WorkspacePaths
 
 SUPPORTED_EXTENSIONS = {
     ".pdf",
@@ -54,14 +54,17 @@ def _allocate_doc_name(src: Path, paths: WorkspacePaths, file_hash: str) -> tupl
         source_candidate = paths.wiki_dir / "sources" / f"{candidate_name}.md"
         summary_candidate = paths.wiki_dir / "summaries" / f"{candidate_name}.md"
 
+        # Reuse the original doc slot when we are re-processing the same file
+        # after a partial failure. This avoids creating name-2/name-3 retries
+        # when raw/source/summary artifacts already exist but the hash was never
+        # registered.
         if raw_candidate.resolve() == src.resolve():
-            if not source_candidate.exists() and not summary_candidate.exists():
-                return candidate_name, raw_candidate
-
-        if not raw_candidate.exists() and not source_candidate.exists() and not summary_candidate.exists():
             return candidate_name, raw_candidate
 
-        if _file_matches_hash(raw_candidate, file_hash) and not source_candidate.exists() and not summary_candidate.exists():
+        if raw_candidate.exists() and _file_matches_hash(raw_candidate, file_hash):
+            return candidate_name, raw_candidate
+
+        if not raw_candidate.exists() and not source_candidate.exists() and not summary_candidate.exists():
             return candidate_name, raw_candidate
 
         candidate_name = f"{base_name}-{counter}"

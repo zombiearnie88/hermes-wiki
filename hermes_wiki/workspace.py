@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from hermes_wiki.config import DEFAULT_CONFIG, load_config, save_config
-from hermes_wiki.schema import DEFAULT_AGENTS_MD
-from hermes_wiki.state import HashRegistry
+from .config import DEFAULT_CONFIG, load_config, save_config
+from .schema import DEFAULT_AGENTS_MD, DEFAULT_SCHEMA_MD
+from .state import HashRegistry
 
 
 STATE_DIR_NAME = ".hermeskb"
@@ -45,14 +45,18 @@ class WorkspacePaths:
         return self.wiki_dir / "log.md"
 
     @property
-    def agents_path(self) -> Path:
-        return self.wiki_dir / "AGENTS.md"
+    def schema_path(self) -> Path:
+        return self.wiki_dir / "SCHEMA.md"
 
+    @property
+    def agents_path(self) -> Path:
+        return self.root / "AGENTS.md"
 
 @dataclass(frozen=True)
 class WorkspaceStatus:
     root: Path
     model: str
+    provider: str
     language: str
     long_doc_threshold: int
     raw_files: int
@@ -89,6 +93,7 @@ def init_workspace(
     root: Path,
     *,
     model: str,
+    provider: str | None = None,
     language: str,
     long_doc_threshold: int,
 ) -> WorkspacePaths:
@@ -110,6 +115,7 @@ def init_workspace(
     (paths.wiki_dir / "reports").mkdir(parents=True, exist_ok=False)
     paths.state_dir.mkdir(parents=True, exist_ok=False)
 
+    paths.schema_path.write_text(DEFAULT_SCHEMA_MD, encoding="utf-8")
     paths.agents_path.write_text(DEFAULT_AGENTS_MD, encoding="utf-8")
     paths.index_path.write_text(
         "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
@@ -121,6 +127,7 @@ def init_workspace(
     config.update(
         {
             "model": model,
+            "provider": provider or DEFAULT_CONFIG["provider"],
             "language": language,
             "long_doc_threshold": long_doc_threshold,
         }
@@ -141,6 +148,7 @@ def read_workspace_status(paths: WorkspacePaths) -> WorkspaceStatus:
     return WorkspaceStatus(
         root=paths.root,
         model=str(config.get("model", DEFAULT_CONFIG["model"])),
+        provider=str(config.get("provider", DEFAULT_CONFIG["provider"])),
         language=str(config.get("language", DEFAULT_CONFIG["language"])),
         long_doc_threshold=int(config.get("long_doc_threshold", DEFAULT_CONFIG["long_doc_threshold"])),
         raw_files=raw_files,

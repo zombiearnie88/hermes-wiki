@@ -21,6 +21,9 @@ dependencies = [
 [project.entry-points."hermes_agent.plugins"]
 hermes-wiki = "hermes_wiki"
 
+[project.scripts]
+hermes-wiki = "hermes_wiki.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest",

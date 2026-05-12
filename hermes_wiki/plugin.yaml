@@ -2,3 +2,10 @@ name: hermes-wiki
 version: 0.1.0
 description: Hermes plugin for building and maintaining an LLM wiki
 author: Thach Duong
+provides_tools:
+  - wiki_init
+  - wiki_add
+  - wiki_status
+  - wiki_config
+  - wiki_list
+  - wiki_deps

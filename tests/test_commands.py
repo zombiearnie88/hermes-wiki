@@ -4,15 +4,22 @@ from pathlib import Path
 
 from hermes_wiki import commands
 from hermes_wiki.compiler import CompileResult
+from hermes_wiki.deps import CapabilityStatus
+from hermes_wiki.deps import DependencyInstallResult
+from hermes_wiki.deps import DependencyStatus
 
 
-def _stub_compile(doc_name, source_path, paths, model):
+def _stub_compile(doc_name, source_path, paths, model, provider=None, *, language_override=None):
     summary_path = paths.wiki_dir / "summaries" / f"{doc_name}.md"
     summary_path.write_text(
         "---\ndoc_type: short\nfull_text: sources/{0}.md\n---\n\n# Summary\n".format(doc_name),
         encoding="utf-8",
     )
     return CompileResult(doc_brief="brief", created_concepts=1, updated_concepts=0, related_concepts=0)
+
+
+def _allow_add_requirements(monkeypatch) -> None:
+    monkeypatch.setattr(commands, "_check_add_requirements", lambda files: None)
 
 
 def test_run_init_and_status_round_trip(tmp_path: Path) -> None:
@@ -27,8 +34,11 @@ def test_run_init_and_status_round_trip(tmp_path: Path) -> None:
     assert (workspace / ".hermeskb" / "config.yaml").is_file()
     assert "Workspace: " in status_output
     assert "Model: test/model" in status_output
+    assert "Provider: openai-codex" in status_output
     assert "Language: fr" in status_output
     assert "Long-doc threshold: 12" in status_output
+    assert "Capabilities:" in status_output
+    assert "Dependencies:" in status_output
 
 
 def test_run_add_accepts_nested_workspace_override(tmp_path: Path, monkeypatch) -> None:
@@ -37,6 +47,7 @@ def test_run_add_accepts_nested_workspace_override(tmp_path: Path, monkeypatch) 
     source.write_text("# Note\n\nHello world.\n", encoding="utf-8")
     commands._run_init(str(workspace), "test/model", "en", 20)
     monkeypatch.setattr(commands, "compile_short_doc", _stub_compile)
+    _allow_add_requirements(monkeypatch)
 
     nested_override = workspace / "wiki" / "concepts"
     output = commands._run_add(str(source), str(nested_override))
@@ -61,6 +72,7 @@ def test_run_add_renames_duplicate_basenames(tmp_path: Path, monkeypatch) -> Non
 
     commands._run_init(str(workspace), "test/model", "en", 20)
     monkeypatch.setattr(commands, "compile_short_doc", _stub_compile)
+    _allow_add_requirements(monkeypatch)
 
     output = commands._run_add(str(input_dir), str(workspace))
 
@@ -80,11 +92,12 @@ def test_run_add_continues_after_single_file_failure(tmp_path: Path, monkeypatch
     (input_dir / "bad.md").write_text("# BAD\n", encoding="utf-8")
 
     commands._run_init(str(workspace), "test/model", "en", 20)
+    _allow_add_requirements(monkeypatch)
 
-    def stub_compile(doc_name, source_path, paths, model):
+    def stub_compile(doc_name, source_path, paths, model, provider, *, language_override=None):
         if doc_name == "bad":
             raise RuntimeError("simulated compile failure")
-        return _stub_compile(doc_name, source_path, paths, model)
+        return _stub_compile(doc_name, source_path, paths, model, provider, language_override=language_override)
 
     monkeypatch.setattr(commands, "compile_short_doc", stub_compile)
 
@@ -95,3 +108,301 @@ def test_run_add_continues_after_single_file_failure(tmp_path: Path, monkeypatch
     assert "ERROR bad.md: simulated compile failure" in output
     assert "Known hashes: 1" in status_output
     assert (workspace / "wiki" / "sources" / "ok.md").is_file()
+
+
+def test_run_add_reuses_doc_name_after_failed_attempt(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "retry.md"
+    source.write_text("# Retry\n", encoding="utf-8")
+    commands._run_init(str(workspace), "test/model", "en", 20)
+    _allow_add_requirements(monkeypatch)
+
+    attempts = {"count": 0}
+
+    def flaky_compile(doc_name, source_path, paths, model, provider, *, language_override=None):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("first attempt failed")
+        return _stub_compile(doc_name, source_path, paths, model, provider, language_override=language_override)
+
+    monkeypatch.setattr(commands, "compile_short_doc", flaky_compile)
+
+    first_output = commands._run_add(str(source), str(workspace))
+    second_output = commands._run_add(str(source), str(workspace))
+
+    assert "ERROR retry.md: first attempt failed" in first_output
+    assert "OK retry.md" in second_output
+    assert "as retry-2" not in second_output
+    assert (workspace / "raw" / "retry.md").is_file()
+    assert not (workspace / "raw" / "retry-2.md").exists()
+    assert (workspace / "wiki" / "sources" / "retry.md").is_file()
+
+
+def test_run_status_includes_dependency_health(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    commands._run_init(str(workspace), "test/model", "en", 20)
+
+    monkeypatch.setattr(
+        commands,
+        "capability_statuses",
+        lambda: [
+            CapabilityStatus(label="markdown/text/csv ingest", ready=True, detail="built in"),
+            CapabilityStatus(label="summary and concept generation", ready=False, detail="missing Hermes runtime or json-repair"),
+        ],
+    )
+    monkeypatch.setattr(
+        commands,
+        "dependency_statuses",
+        lambda: [
+            DependencyStatus(label="Hermes runtime", module_name="run_agent", available=False),
+            DependencyStatus(label="json-repair", module_name="json_repair", available=True),
+        ],
+    )
+
+    output = commands._run_status(str(workspace))
+
+    assert "Capabilities:" in output
+    assert "- markdown/text/csv ingest: ready (built in)" in output
+    assert "- summary and concept generation: blocked (missing Hermes runtime or json-repair)" in output
+    assert "Dependencies:" in output
+    assert "- Hermes runtime: missing" in output
+    assert "- json-repair: available" in output
+
+
+def test_run_add_passes_model_provider_and_language_overrides(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "note.md"
+    source.write_text("# Note\n", encoding="utf-8")
+    commands._run_init(str(workspace), "workspace/model", "en", 20)
+    captured = {}
+    _allow_add_requirements(monkeypatch)
+
+    def capture_compile(doc_name, source_path, paths, model, provider, *, language_override=None):
+        captured["doc_name"] = doc_name
+        captured["model"] = model
+        captured["provider"] = provider
+        captured["language_override"] = language_override
+        return _stub_compile(doc_name, source_path, paths, model, provider)
+
+    monkeypatch.setattr(commands, "compile_short_doc", capture_compile)
+
+    output = commands._run_add(
+        str(source),
+        str(workspace),
+        model_override="override/model",
+        language_override="de",
+        provider_override="override-provider",
+    )
+
+    assert "OK note.md" in output
+    assert captured["doc_name"] == "note"
+    assert captured["model"] == "override/model"
+    assert captured["provider"] == "override-provider"
+    assert captured["language_override"] == "de"
+
+
+def test_run_deps_reports_runtime_and_group_commands(monkeypatch) -> None:
+    monkeypatch.setattr(commands, "runtime_python_path", lambda: "/runtime/python")
+    monkeypatch.setattr(
+        commands,
+        "capability_statuses",
+        lambda: [
+            CapabilityStatus(label="summary and concept generation", ready=False, detail="missing Hermes runtime or json-repair"),
+            CapabilityStatus(label="pdf ingest", ready=False, detail="missing PyMuPDF"),
+        ],
+    )
+    monkeypatch.setattr(
+        commands,
+        "dependency_statuses",
+        lambda: [
+            DependencyStatus(label="Hermes runtime", module_name="run_agent", available=True),
+            DependencyStatus(label="json-repair", module_name="json_repair", available=False),
+            DependencyStatus(label="PyMuPDF", module_name="pymupdf", available=False),
+            DependencyStatus(label="MarkItDown", module_name="markitdown", available=True),
+        ],
+    )
+
+    def fake_build(group: str = "all", *, missing_only: bool = False) -> str | None:
+        assert missing_only is True
+        commands_map = {
+            "core": "uv pip install --python /runtime/python json-repair",
+            "pdf": "uv pip install --python /runtime/python pymupdf",
+            "office": None,
+            "all": "uv pip install --python /runtime/python json-repair pymupdf",
+        }
+        return commands_map[group]
+
+    monkeypatch.setattr(commands, "build_uv_install_command", fake_build)
+
+    output = commands._run_deps()
+
+    assert "Runtime Python: /runtime/python" in output
+    assert "Repair:" in output
+    assert "Install missing core: uv pip install --python /runtime/python json-repair" in output
+    assert "Install missing pdf: uv pip install --python /runtime/python pymupdf" in output
+    assert "Install all missing packages: uv pip install --python /runtime/python json-repair pymupdf" in output
+
+
+def test_run_deps_install_reports_success(monkeypatch) -> None:
+    monkeypatch.setattr(commands, "runtime_python_path", lambda: "/runtime/python")
+    monkeypatch.setattr(
+        commands,
+        "install_dependency_group",
+        lambda group, missing_only=True: DependencyInstallResult(
+            group=group,
+            packages=("json-repair",),
+            command="uv pip install --python /runtime/python json-repair",
+            exit_code=0,
+            stdout="installed",
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        commands,
+        "capability_statuses",
+        lambda: [CapabilityStatus(label="summary and concept generation", ready=True, detail="Hermes runtime + json-repair")],
+    )
+    monkeypatch.setattr(
+        commands,
+        "dependency_statuses",
+        lambda: [
+            DependencyStatus(label="Hermes runtime", module_name="run_agent", available=True),
+            DependencyStatus(label="json-repair", module_name="json_repair", available=True),
+        ],
+    )
+    monkeypatch.setattr(commands, "build_uv_install_command", lambda group="all", *, missing_only=False: None)
+
+    output = commands._run_deps("core")
+
+    assert "Installed dependency group 'core': json-repair" in output
+    assert "Command: uv pip install --python /runtime/python json-repair" in output
+    assert "Runtime Python: /runtime/python" in output
+
+
+def test_run_add_blocks_before_side_effects_when_requirements_missing(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "note.md"
+    source.write_text("# Note\n", encoding="utf-8")
+    commands._run_init(str(workspace), "workspace/model", "en", 20)
+    monkeypatch.setattr(
+        commands,
+        "_check_add_requirements",
+        lambda files: "ERROR wiki add is blocked by missing runtime dependencies.\nRuntime Python: /runtime/python",
+    )
+
+    output = commands._run_add(str(source), str(workspace))
+
+    assert output.startswith("ERROR wiki add is blocked by missing runtime dependencies.")
+    assert not (workspace / "raw" / "note.md").exists()
+    assert not (workspace / "wiki" / "sources" / "note.md").exists()
+
+
+def test_run_config_reads_and_updates_workspace_config(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    commands._run_init(str(workspace), "initial/model", "en", 20)
+
+    before = commands._run_config(str(workspace))
+    after = commands._run_config(
+        str(workspace),
+        model="updated/model",
+        provider="updated-provider",
+        language="fr",
+        long_doc_threshold=55,
+    )
+
+    assert "Model: initial/model" in before
+    assert "Provider: openai-codex" in before
+    assert "Updated workspace config." in after
+    assert "Model: updated/model" in after
+    assert "Provider: updated-provider" in after
+    assert "Language: fr" in after
+    assert "Long-doc threshold: 55" in after
+
+
+def test_run_init_rejects_invalid_settings(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+
+    try:
+        commands._run_init(str(workspace), "", "en", 20)
+    except ValueError as exc:
+        assert "Model must not be empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+    try:
+        commands._run_init(str(workspace), "test/model", "", 20)
+    except ValueError as exc:
+        assert "Language must not be empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+    try:
+        commands._run_init(str(workspace), "test/model", "en", 0)
+    except ValueError as exc:
+        assert "Long-doc threshold must be greater than zero" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_run_config_and_add_reject_invalid_overrides(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "note.md"
+    source.write_text("# Note\n", encoding="utf-8")
+    commands._run_init(str(workspace), "initial/model", "en", 20)
+
+    try:
+        commands._run_config(str(workspace), long_doc_threshold=-1)
+    except ValueError as exc:
+        assert "Long-doc threshold must be greater than zero" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+    try:
+        commands._run_add(str(source), str(workspace), model_override="")
+    except ValueError as exc:
+        assert "Model must not be empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+    try:
+        commands._run_add(str(source), str(workspace), provider_override="")
+    except ValueError as exc:
+        assert "Provider must not be empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+    try:
+        commands._run_add(str(source), str(workspace), language_override="")
+    except ValueError as exc:
+        assert "Language must not be empty" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_handle_wiki_status_command_reports_corrupt_hash_registry(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    commands._run_init(str(workspace), "test/model", "en", 20)
+    (workspace / ".hermeskb" / "hashes.json").write_text("{broken", encoding="utf-8")
+
+    output = commands.handle_wiki_status_command(f"--workspace {workspace}")
+
+    assert "Failed to read status: Hash registry is corrupt" in output
+
+
+def test_run_list_shows_documents_and_concepts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    commands._run_init(str(workspace), "test/model", "en", 20)
+    hashes_path = workspace / ".hermeskb" / "hashes.json"
+    hashes_path.write_text(
+        '{\n  "abc": {"name": "paper.pdf", "type": "pdf", "doc_name": "paper"},\n  "def": {"name": "notes.md", "type": "md", "doc_name": "notes"}\n}',
+        encoding="utf-8",
+    )
+    (workspace / "wiki" / "concepts" / "attention.md").write_text("# Attention\n", encoding="utf-8")
+
+    output = commands._run_list(str(workspace))
+
+    assert "Documents:" in output
+    assert "- notes (md) <- notes.md" in output
+    assert "- paper (pdf) <- paper.pdf" in output
+    assert "Concepts:" in output
+    assert "- attention" in output
