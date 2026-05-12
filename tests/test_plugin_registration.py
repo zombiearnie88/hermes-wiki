@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
+import types
 from pathlib import Path
 
 from hermes_wiki import register
@@ -42,6 +45,8 @@ def test_register_wires_tools_commands_and_skills() -> None:
         "wiki_config",
         "wiki_list",
         "wiki_deps",
+        "get_document_structure",
+        "get_page_content",
     ]
     assert all(tool["toolset"] == "hermes_wiki" for tool in ctx.tools)
     assert [command["name"] for command in ctx.commands] == [
@@ -78,11 +83,77 @@ def test_plugin_directory_is_self_contained() -> None:
     assert (PLUGIN_DIR / "skills" / "wiki-operator" / "SKILL.md").exists()
 
 
+def test_plugin_loads_under_hermes_directory_module_name() -> None:
+    module_name = "hermes_plugins.hermes_wiki"
+
+    def is_target_module(name: str) -> bool:
+        return (
+            name == "hermes_wiki"
+            or name.startswith("hermes_wiki.")
+            or name == "hermes_plugins"
+            or name.startswith("hermes_plugins.")
+        )
+
+    class BlockTopLevelHermesWiki:
+        def find_spec(self, fullname, path=None, target=None):
+            del path, target
+            if fullname == "hermes_wiki" or fullname.startswith("hermes_wiki."):
+                raise ModuleNotFoundError("blocked top-level hermes_wiki import")
+            return None
+
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if is_target_module(name)
+    }
+    for name in saved_modules:
+        sys.modules.pop(name, None)
+
+    parent = types.ModuleType("hermes_plugins")
+    parent.__path__ = []
+    blocker = BlockTopLevelHermesWiki()
+
+    sys.modules["hermes_plugins"] = parent
+    sys.meta_path.insert(0, blocker)
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            PLUGIN_DIR / "__init__.py",
+            submodule_search_locations=[str(PLUGIN_DIR)],
+        )
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+
+        ctx = FakeContext()
+        module.register(ctx)
+
+        assert [tool["name"] for tool in ctx.tools] == [
+            "wiki_init",
+            "wiki_add",
+            "wiki_status",
+            "wiki_config",
+            "wiki_list",
+            "wiki_deps",
+            "get_document_structure",
+            "get_page_content",
+        ]
+    finally:
+        sys.meta_path.remove(blocker)
+        for name in list(sys.modules):
+            if is_target_module(name):
+                sys.modules.pop(name, None)
+        sys.modules.update(saved_modules)
+
+
 def test_docker_compose_mounts_plugin_directory_directly() -> None:
     compose_text = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "- ../hermes_wiki:/opt/data/profiles/clinic/plugins/hermes-wiki:ro" in compose_text
     assert "- ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki" in compose_text
     assert "uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt" in compose_text
+    assert "uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt" in compose_text
     assert "- ..:/opt/hermes-wiki:ro" not in compose_text
     assert "cp /opt/hermes-wiki" not in compose_text

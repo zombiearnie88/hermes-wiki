@@ -38,6 +38,32 @@ services:
     networks:
       - ai-internal
 
+  hermes-webui-plugin-deps:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    restart: "no"
+    user: "0"
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -lc
+      - |
+        if [ ! -x /app/venv/bin/python3 ]; then
+          uv venv /app/venv
+        fi
+        uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt
+        chown -R "$${WANTED_UID}:$${WANTED_GID}" /app/venv
+    volumes:
+      - ./data/hermes-home/profiles/clinic:/home/hermeswebui/.hermes
+      - ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki:ro
+      - hermes-webui-venv:/app/venv
+    environment:
+      WANTED_UID: ${HERMES_UID}
+      WANTED_GID: ${HERMES_GID}
+    networks:
+      - ai-internal
+
   hermes-webui:
     image: ghcr.io/nesquena/hermes-webui:latest
     container_name: hermes-webui
@@ -47,12 +73,15 @@ services:
         condition: service_completed_successfully
       hermes-clinic:
         condition: service_started
+      hermes-webui-plugin-deps:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:${HERMES_WEBUI_PORT}:8787"
     volumes:
       - ./data/hermes-home/profiles/clinic:/home/hermeswebui/.hermes
       - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
       - ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki
+      - hermes-webui-venv:/app/venv
       - ./data/hermes-home/profiles/clinic/workspace:/workspace
       - ./data/hermes-home/profiles/clinic/workspace:/opt/data/profiles/clinic/workspace
     environment:
@@ -74,3 +103,4 @@ networks:
 
 volumes:
   hermes-agent-src:
+  hermes-webui-venv:

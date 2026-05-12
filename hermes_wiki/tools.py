@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from .commands import (
+    _resolve_workspace,
     _run_add,
     _run_deps,
     _run_config,
@@ -12,6 +13,13 @@ from .commands import (
     is_failure_output,
 )
 from .config import DEFAULT_CONFIG
+from .pageindex.config import load_pageindex_config
+from .pageindex.retrieve import (
+    PageRangeError,
+    get_document_structure as _get_pageindex_structure,
+    get_page_content as _get_pageindex_content,
+)
+from .workspace import workspace_paths
 
 
 def _success(action: str, output: str, **extra) -> str:
@@ -119,3 +127,59 @@ def wiki_deps(args: dict, **kwargs) -> str:
     except Exception as exc:
         return _failure("wiki_deps", str(exc), install=install)
     return _wrap_output("wiki_deps", output, install=install)
+
+
+def _resolve_tool_paths(action: str, workspace: str | None):
+    workspace_root, error = _resolve_workspace(workspace)
+    if error:
+        return None, _failure(action, error, workspace=workspace)
+    return workspace_paths(workspace_root), None
+
+
+def get_document_structure(args: dict, **kwargs) -> str:
+    del kwargs
+    action = "get_document_structure"
+    doc_name = args.get("doc_name")
+    workspace = args.get("workspace") or None
+    if not doc_name:
+        return _failure(action, "Missing required argument: doc_name", workspace=workspace)
+
+    paths, error = _resolve_tool_paths(action, workspace)
+    if error:
+        return error
+    try:
+        payload = _get_pageindex_structure(paths, str(doc_name))
+    except FileNotFoundError as exc:
+        return _failure(action, str(exc), doc_name=doc_name, workspace=workspace)
+    except Exception as exc:
+        return _failure(action, str(exc), doc_name=doc_name, workspace=workspace)
+    return _success(action, "document structure loaded", **payload, workspace=workspace)
+
+
+def get_page_content(args: dict, **kwargs) -> str:
+    del kwargs
+    action = "get_page_content"
+    doc_name = args.get("doc_name")
+    pages = args.get("pages")
+    workspace = args.get("workspace") or None
+    if not doc_name:
+        return _failure(action, "Missing required argument: doc_name", workspace=workspace)
+    if not pages:
+        return _failure(action, "Missing required argument: pages", doc_name=doc_name, workspace=workspace)
+
+    paths, error = _resolve_tool_paths(action, workspace)
+    if error:
+        return error
+    try:
+        config = load_pageindex_config(paths.config_path)
+        payload = _get_pageindex_content(
+            paths,
+            str(doc_name),
+            str(pages),
+            max_pages=config.max_pages_per_tool_call,
+        )
+    except (FileNotFoundError, PageRangeError) as exc:
+        return _failure(action, str(exc), doc_name=doc_name, pages=pages, workspace=workspace)
+    except Exception as exc:
+        return _failure(action, str(exc), doc_name=doc_name, pages=pages, workspace=workspace)
+    return _success(action, "page content loaded", **payload, workspace=workspace)

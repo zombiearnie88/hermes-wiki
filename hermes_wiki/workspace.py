@@ -37,6 +37,10 @@ class WorkspacePaths:
         return self.state_dir / "hashes.json"
 
     @property
+    def pageindex_dir(self) -> Path:
+        return self.state_dir / "pageindex"
+
+    @property
     def index_path(self) -> Path:
         return self.wiki_dir / "index.md"
 
@@ -114,6 +118,7 @@ def init_workspace(
     (paths.wiki_dir / "explorations").mkdir(parents=True, exist_ok=False)
     (paths.wiki_dir / "reports").mkdir(parents=True, exist_ok=False)
     paths.state_dir.mkdir(parents=True, exist_ok=False)
+    paths.pageindex_dir.mkdir(parents=True, exist_ok=False)
 
     paths.schema_path.write_text(DEFAULT_SCHEMA_MD, encoding="utf-8")
     paths.agents_path.write_text(DEFAULT_AGENTS_MD, encoding="utf-8")

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from hermes_wiki import commands
 from hermes_wiki.compiler import CompileResult
+from hermes_wiki.converter import ConvertResult
 from hermes_wiki.deps import CapabilityStatus
 from hermes_wiki.deps import DependencyInstallResult
 from hermes_wiki.deps import DependencyStatus
@@ -406,3 +407,82 @@ def test_run_list_shows_documents_and_concepts(tmp_path: Path) -> None:
     assert "- paper (pdf) <- paper.pdf" in output
     assert "Concepts:" in output
     assert "- attention" in output
+
+
+def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "long.pdf"
+    source.write_bytes(b"pdf")
+    commands._run_init(str(workspace), "test/model", "en", 2)
+    paths = commands.workspace_paths(workspace)
+    raw_path = paths.raw_dir / "long.pdf"
+    _allow_add_requirements(monkeypatch)
+
+    monkeypatch.setattr(
+        commands,
+        "convert_document",
+        lambda file_path, paths_arg: ConvertResult(
+            doc_name="long",
+            raw_path=raw_path,
+            file_hash="hash-long",
+            unsupported_long_doc=True,
+            long_doc_page_count=30,
+        ),
+    )
+
+    captured = {}
+
+    def fake_compile_pageindex(doc_name, raw_path_arg, paths_arg, model, provider, *, language_override=None):
+        captured["doc_name"] = doc_name
+        captured["raw_path"] = raw_path_arg
+        captured["model"] = model
+        captured["provider"] = provider
+        captured["language_override"] = language_override
+        (paths_arg.wiki_dir / "summaries" / f"{doc_name}.md").write_text(
+            "---\ndoc_type: pageindex\nfull_text: pageindex/long\n---\n\n# Summary\n",
+            encoding="utf-8",
+        )
+        return CompileResult(doc_brief="brief", created_concepts=2, updated_concepts=1, related_concepts=0)
+
+    monkeypatch.setattr(commands, "compile_pageindex_doc", fake_compile_pageindex)
+
+    output = commands._run_add(str(source), str(workspace), provider_override="test-provider")
+    list_output = commands._run_list(str(workspace))
+
+    assert "OK long.pdf: pageindex summary written (30 pages), created 2, updated 1, related 0" in output
+    assert captured["doc_name"] == "long"
+    assert captured["raw_path"] == raw_path
+    assert captured["provider"] == "test-provider"
+    assert "- long (pageindex) <- long.pdf" in list_output
+
+
+def test_failed_pageindex_build_does_not_register_hash(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "long.pdf"
+    source.write_bytes(b"pdf")
+    commands._run_init(str(workspace), "test/model", "en", 2)
+    paths = commands.workspace_paths(workspace)
+    _allow_add_requirements(monkeypatch)
+
+    monkeypatch.setattr(
+        commands,
+        "convert_document",
+        lambda file_path, paths_arg: ConvertResult(
+            doc_name="long",
+            raw_path=paths.raw_dir / "long.pdf",
+            file_hash="hash-long",
+            unsupported_long_doc=True,
+            long_doc_page_count=30,
+        ),
+    )
+    monkeypatch.setattr(
+        commands,
+        "compile_pageindex_doc",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("pageindex failed")),
+    )
+
+    output = commands._run_add(str(source), str(workspace))
+    status_output = commands._run_status(str(workspace))
+
+    assert "ERROR long.pdf: pageindex failed" in output
+    assert "Known hashes: 0" in status_output

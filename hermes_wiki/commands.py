@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from .compiler import compile_short_doc
+from .compiler import compile_pageindex_doc, compile_short_doc
 from .config import DEFAULT_CONFIG, load_config, save_config
 from .converter import SUPPORTED_EXTENSIONS, convert_document
 from .deps import (
@@ -406,9 +406,34 @@ def _run_add(
                 continue
 
             if convert_result.unsupported_long_doc:
+                if convert_result.raw_path is None or convert_result.file_hash is None:
+                    lines.append(f"ERROR {file_path.name}: conversion did not produce a raw PDF")
+                    continue
+                doc_name = convert_result.doc_name or file_path.stem
+                compile_result = compile_pageindex_doc(
+                    doc_name,
+                    convert_result.raw_path,
+                    paths,
+                    model,
+                    provider,
+                    language_override=language_override,
+                )
+                registry.add(
+                    convert_result.file_hash,
+                    {
+                        "name": file_path.name,
+                        "type": "pageindex",
+                        "doc_name": doc_name,
+                    },
+                )
+                append_log(paths.wiki_dir, "ingest", file_path.name)
+                rename_note = ""
+                if doc_name != file_path.stem:
+                    rename_note = f" as {doc_name}"
                 lines.append(
-                    f"UNSUPPORTED {file_path.name}: long documents are not supported yet "
-                    f"({convert_result.long_doc_page_count} pages >= {config.get('long_doc_threshold', 20)} threshold)"
+                    f"OK {file_path.name}{rename_note}: pageindex summary written "
+                    f"({convert_result.long_doc_page_count} pages), created {compile_result.created_concepts}, "
+                    f"updated {compile_result.updated_concepts}, related {compile_result.related_concepts}"
                 )
                 continue
 

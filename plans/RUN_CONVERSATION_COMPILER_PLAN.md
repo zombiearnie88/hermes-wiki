@@ -74,7 +74,7 @@ Refactor `compile_short_doc(...)` to build and reuse message history.
 
 ### Step 1: Summary
 
-- Build `system_prompt` from `wiki/AGENTS.md` and configured language.
+- Build `system_prompt` from `wiki/SCHEMA.md` and configured language.
 - Build `summary_user` with the document name and full source content.
 - Call `generate_conversation(...)` with `system_message=system_prompt`, `user_message=summary_user`, and no prior history.
 - Parse the response as JSON.

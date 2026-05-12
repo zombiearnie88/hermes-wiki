@@ -58,6 +58,20 @@ def register(ctx) -> None:
         handler=tools.wiki_deps,
         description="Inspect or install Hermes wiki runtime dependencies.",
     )
+    ctx.register_tool(
+        name="get_document_structure",
+        toolset="hermes_wiki",
+        schema=schemas.GET_DOCUMENT_STRUCTURE,
+        handler=tools.get_document_structure,
+        description="Return PageIndex structure for a long document.",
+    )
+    ctx.register_tool(
+        name="get_page_content",
+        toolset="hermes_wiki",
+        schema=schemas.GET_PAGE_CONTENT,
+        handler=tools.get_page_content,
+        description="Return selected PageIndex page content for a long document.",
+    )
 
     ctx.register_command(
         "wiki-init",

@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import load_config
+from .pageindex.builder import build_or_load_pageindex
+from .pageindex.tree import render_tree
 from .runtime import GenerationResult, generate_conversation, generate_text
-from .schema import get_agents_md
+from .schema import get_schema_md
 from .workspace import WorkspacePaths
 
 _SYSTEM_TEMPLATE = """\
@@ -33,6 +35,16 @@ Return a JSON object with two keys:
 - "content": The full summary in Markdown. Include key concepts, findings, and [[wikilinks]] to concepts that could become concept pages
 
 Return ONLY valid JSON, no fences.
+"""
+
+_PAGEINDEX_SUMMARY_USER = """\
+New long document: {doc_name}
+Page count: {page_count}
+
+Generated PageIndex summary:
+{summary}
+
+Based on this PageIndex summary and structure, decide concept updates. Do not assume access to full long-document text.
 """
 
 _CONCEPTS_PLAN_USER = """\
@@ -179,14 +191,28 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     return "\n".join(lines) or "(none yet)"
 
 
-def _write_summary(wiki_dir: Path, doc_name: str, summary: str, doc_type: str = "short") -> None:
+def _write_summary(
+    wiki_dir: Path,
+    doc_name: str,
+    summary: str,
+    doc_type: str = "short",
+    *,
+    full_text: str | None = None,
+    extra_frontmatter: dict[str, str | int] | None = None,
+) -> None:
     if summary.startswith("---"):
         end = summary.find("---", 3)
         if end != -1:
             summary = summary[end + 3 :].lstrip("\n")
     summaries_dir = wiki_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    frontmatter = "---\n" + f"doc_type: {doc_type}\nfull_text: sources/{doc_name}.md\n" + "---\n\n"
+    frontmatter_lines = [
+        f"doc_type: {doc_type}",
+        f"full_text: {full_text or f'sources/{doc_name}.md'}",
+    ]
+    for key, value in (extra_frontmatter or {}).items():
+        frontmatter_lines.append(f"{key}: {value}")
+    frontmatter = "---\n" + "\n".join(frontmatter_lines) + "\n---\n\n"
     (summaries_dir / f"{doc_name}.md").write_text(frontmatter + summary, encoding="utf-8")
 
 
@@ -414,42 +440,19 @@ def _update_index(
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def compile_short_doc(
+def _compile_concepts_from_summary(
     doc_name: str,
-    source_path: Path,
     paths: WorkspacePaths,
     model: str,
     provider: str | None,
     *,
-    language_override: str | None = None,
+    system_prompt: str,
+    summary_user: str,
+    summary: str,
+    doc_brief: str,
+    doc_type: str,
 ) -> CompileResult:
-    config = load_config(paths.config_path)
-    language = language_override or str(config.get("language", "en"))
     wiki_dir = paths.wiki_dir
-    schema_md = get_agents_md(wiki_dir)
-    content = source_path.read_text(encoding="utf-8")
-    system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
-
-    summary_user = _SUMMARY_USER.format(doc_name=doc_name, content=content)
-    summary_result = _generate_conversation(
-        model,
-        provider,
-        summary_user,
-        system_message=system_prompt,
-    )
-    summary_raw = summary_result.final_response
-    try:
-        summary_parsed = _parse_json(summary_raw)
-        if isinstance(summary_parsed, dict):
-            doc_brief = str(summary_parsed.get("brief", ""))
-            summary = str(summary_parsed.get("content", summary_raw))
-        else:
-            doc_brief = ""
-            summary = summary_raw
-    except (json.JSONDecodeError, ValueError):
-        doc_brief = ""
-        summary = summary_raw
-    _write_summary(wiki_dir, doc_name, summary)
     base_history = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": summary_user},
@@ -470,7 +473,7 @@ def compile_short_doc(
     try:
         parsed = _parse_json(plan_raw)
     except (json.JSONDecodeError, ValueError):
-        _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type="short")
+        _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return CompileResult(doc_brief=doc_brief, created_concepts=0, updated_concepts=0, related_concepts=0)
 
     if isinstance(parsed, list):
@@ -486,7 +489,7 @@ def compile_short_doc(
     update_items = plan["update"]
     related_items = plan["related"]
     if not create_items and not update_items and not related_items:
-        _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type="short")
+        _update_index(wiki_dir, doc_name, [], doc_brief=doc_brief, doc_type=doc_type)
         return CompileResult(doc_brief=doc_brief, created_concepts=0, updated_concepts=0, related_concepts=0)
 
     source_file = f"summaries/{doc_name}.md"
@@ -585,11 +588,135 @@ def compile_short_doc(
         concept_names,
         doc_brief=doc_brief,
         concept_briefs=concept_briefs_map,
-        doc_type="short",
+        doc_type=doc_type,
     )
     return CompileResult(
         doc_brief=doc_brief,
         created_concepts=created_count,
         updated_concepts=updated_count,
         related_concepts=len(sanitized_related),
+    )
+
+
+def compile_short_doc(
+    doc_name: str,
+    source_path: Path,
+    paths: WorkspacePaths,
+    model: str,
+    provider: str | None,
+    *,
+    language_override: str | None = None,
+) -> CompileResult:
+    config = load_config(paths.config_path)
+    language = language_override or str(config.get("language", "en"))
+    wiki_dir = paths.wiki_dir
+    schema_md = get_schema_md(wiki_dir)
+    content = source_path.read_text(encoding="utf-8")
+    system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
+
+    summary_user = _SUMMARY_USER.format(doc_name=doc_name, content=content)
+    summary_result = _generate_conversation(
+        model,
+        provider,
+        summary_user,
+        system_message=system_prompt,
+    )
+    summary_raw = summary_result.final_response
+    try:
+        summary_parsed = _parse_json(summary_raw)
+        if isinstance(summary_parsed, dict):
+            doc_brief = str(summary_parsed.get("brief", ""))
+            summary = str(summary_parsed.get("content", summary_raw))
+        else:
+            doc_brief = ""
+            summary = summary_raw
+    except (json.JSONDecodeError, ValueError):
+        doc_brief = ""
+        summary = summary_raw
+    _write_summary(wiki_dir, doc_name, summary)
+    return _compile_concepts_from_summary(
+        doc_name,
+        paths,
+        model,
+        provider,
+        system_prompt=system_prompt,
+        summary_user=summary_user,
+        summary=summary,
+        doc_brief=doc_brief,
+        doc_type="short",
+    )
+
+
+def _brief_from_description(description: str) -> str:
+    cleaned = _clean_frontmatter_value(description)
+    return cleaned[:97].rstrip() + "..." if len(cleaned) > 100 else cleaned
+
+
+def _render_pageindex_summary(doc_name: str, page_count: int, description: str, structure: list[dict]) -> str:
+    rendered_tree = render_tree(structure)
+    return "\n".join(
+        [
+            "# Summary",
+            "",
+            description.strip(),
+            "",
+            "## PageIndex Structure",
+            "",
+            rendered_tree or "- (No structure available)",
+            "",
+            "## Retrieval Notes",
+            "",
+            f'Use `get_document_structure("{doc_name}")` for the complete tree and `get_page_content("{doc_name}", "5-8")` for details.',
+            f"Fetch tight page ranges only. This PageIndex document has {page_count} pages.",
+            "",
+        ]
+    )
+
+
+def compile_pageindex_doc(
+    doc_name: str,
+    raw_path: Path,
+    paths: WorkspacePaths,
+    model: str,
+    provider: str | None,
+    *,
+    language_override: str | None = None,
+) -> CompileResult:
+    config = load_config(paths.config_path)
+    language = language_override or str(config.get("language", "en"))
+    wiki_dir = paths.wiki_dir
+    schema_md = get_schema_md(wiki_dir)
+    system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
+
+    pageindex = build_or_load_pageindex(doc_name, raw_path, paths, model, provider, language=language)
+    summary = _render_pageindex_summary(
+        doc_name,
+        pageindex.page_count,
+        pageindex.doc_description,
+        pageindex.structure,
+    )
+    doc_brief = _brief_from_description(pageindex.doc_description)
+    _write_summary(
+        wiki_dir,
+        doc_name,
+        summary,
+        "pageindex",
+        full_text=f"pageindex/{doc_name}",
+        extra_frontmatter={"pageindex_id": doc_name, "page_count": pageindex.page_count},
+    )
+    summary_user = _PAGEINDEX_SUMMARY_USER.format(
+        doc_name=doc_name,
+        page_count=pageindex.page_count,
+        summary=summary,
+    )
+    return _compile_concepts_from_summary(
+        doc_name,
+        paths,
+        model,
+        provider,
+        system_prompt=system_prompt,
+        summary_user=summary_user,
+        summary=summary,
+        doc_brief=doc_brief,
+        doc_type="pageindex",
     )

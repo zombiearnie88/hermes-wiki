@@ -29,6 +29,8 @@ Use the plugin tools first when they are available:
 - `wiki_config`
 - `wiki_list`
 - `wiki_deps`
+- `get_document_structure`
+- `get_page_content`
 
 If slash commands are the active surface in the current Hermes session, use:
 
@@ -89,7 +91,7 @@ Do not manually create or rewrite the wiki structure unless the user explicitly 
 4. If the user asks to initialize a workspace, run `wiki_init` or the equivalent CLI command.
 5. If the user asks to ingest content, use `wiki_add` with the correct workspace path.
 6. If the user asks what is already present, use `wiki_list`.
-7. Report the plugin output clearly, especially for blocked capabilities, skipped files, and unsupported long documents.
+7. Report the plugin output clearly, especially for blocked capabilities, skipped files, PageIndex builds, and guarded retrieval errors.
 
 ## Capability Checks
 
@@ -98,6 +100,7 @@ Important blockers from `wiki_status`:
 - `summary and concept generation` requires Hermes runtime and `json-repair`
 - `pdf ingest` requires PyMuPDF
 - `office/html ingest` requires MarkItDown
+- Long-PDF PageIndex ingest requires Hermes runtime, `json-repair`, and PyMuPDF
 
 If a needed capability is blocked, say so clearly before continuing.
 
@@ -105,14 +108,25 @@ If a needed capability is blocked, say so clearly before continuing.
 
 - If `wiki_status` shows missing `json-repair`, `PyMuPDF`, or `MarkItDown`, prefer `wiki_deps` when that tool surface is available.
 - If `wiki_deps` is unavailable, install the packages into the Python runtime that is actually importing the plugin.
-- Prefer `uv pip --python <hermes-runtime-python> install json-repair pymupdf 'markitdown[all]'`.
+- Prefer `uv pip install --python <hermes-runtime-python> json-repair pymupdf 'markitdown[all]'`.
+- In Docker, prefer the mounted `requirements.txt` with `uv pip install --python <hermes-runtime-python> -r <plugin>/requirements.txt` when the path is known.
 - In this repo's Docker clinic container, `<hermes-runtime-python>` is typically `/opt/hermes/.venv/bin/python`.
+- In this repo's Docker WebUI container, `<hermes-runtime-python>` is typically `/app/venv/bin/python3`.
 - Do not assume `python3 -m pip install ...` touched the same interpreter Hermes is using.
 - Re-run `wiki_status` after repairing dependencies before retrying `wiki_add`.
 
+## Plugin Load Debugging
+
+- A plugin can be enabled in `config.yaml` but disabled at runtime if import fails during plugin loading.
+- For `hermes-webui`, `plugins.enabled: [hermes-wiki]` and `plugins.disabled: []` does not prove that the plugin registered successfully.
+- If the WebUI reports the plugin unavailable, inspect the runtime plugin manager error; `No module named 'hermes_wiki'` usually means a directory-plugin import path problem, not a config disablement.
+- A healthy WebUI container only proves the web server is running; it does not prove plugin import succeeded.
+
 ## Failure Cases
 
-- Long PDFs are intentionally unsupported in v1 once they meet or exceed the configured threshold.
+- Long PDFs route through PageIndex once they meet or exceed the configured threshold.
+- Long non-PDF documents are not supported yet.
+- Use `get_document_structure` before `get_page_content` and fetch tight page ranges only.
 - Existing workspaces should be reused rather than recreated.
 - Unsupported file types should be surfaced clearly instead of being forced through the ingest path.
 
@@ -121,3 +135,4 @@ If a needed capability is blocked, say so clearly before continuing.
 - Use `wiki_status` to verify workspace health and capability readiness.
 - Use `wiki_list` to verify documents and concept pages after ingest.
 - When `wiki_add` succeeds, confirm the output mentions summaries and concept updates or creation counts.
+- For PageIndex documents, use `get_document_structure` and a small `get_page_content` range to verify retrieval.

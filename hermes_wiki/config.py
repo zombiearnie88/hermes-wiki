@@ -8,6 +8,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "provider": "openai-codex",
     "language": "en",
     "long_doc_threshold": 20,
+    "pageindex_toc_check_pages": 20,
+    "pageindex_max_pages_per_node": 10,
+    "pageindex_max_tokens_per_node": 20000,
+    "pageindex_summary_token_threshold": 200,
+    "pageindex_max_pages_per_tool_call": 8,
 }
 
 

@@ -28,7 +28,7 @@ WIKI_INIT = {
             },
             "long_doc_threshold": {
                 "type": "integer",
-                "description": "Page-count threshold where PDFs are treated as unsupported long documents.",
+                "description": "Page-count threshold where PDFs route to PageIndex long-document ingest.",
             },
         },
     },
@@ -116,7 +116,7 @@ WIKI_CONFIG = {
             },
             "long_doc_threshold": {
                 "type": "integer",
-                "description": "New page-count threshold for unsupported long PDFs.",
+                "description": "New page-count threshold for PageIndex long-PDF ingest.",
             },
         },
     },
@@ -156,5 +156,55 @@ WIKI_DEPS = {
                 "description": "Optional dependency group to install into the active Hermes runtime.",
             },
         },
+    },
+}
+
+
+GET_DOCUMENT_STRUCTURE = {
+    "name": "get_document_structure",
+    "description": (
+        "Return the PageIndex tree for an ingested long document without full page text. "
+        "Use this before get_page_content to choose tight page ranges."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "doc_name": {
+                "type": "string",
+                "description": "PageIndex document name, usually the summary stem.",
+            },
+            "workspace": {
+                "type": "string",
+                "description": "Optional workspace root or nested path inside the workspace.",
+            },
+        },
+        "required": ["doc_name"],
+    },
+}
+
+
+GET_PAGE_CONTENT = {
+    "name": "get_page_content",
+    "description": (
+        "Return selected page text for a PageIndex long document. "
+        "Supports pages like '5', '5-7', and '3,8' and enforces the workspace page-count guardrail."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "doc_name": {
+                "type": "string",
+                "description": "PageIndex document name, usually the summary stem.",
+            },
+            "pages": {
+                "type": "string",
+                "description": "Page selector such as '5', '5-7', or '3,8'. Whole-document retrieval is not supported.",
+            },
+            "workspace": {
+                "type": "string",
+                "description": "Optional workspace root or nested path inside the workspace.",
+            },
+        },
+        "required": ["doc_name", "pages"],
     },
 }

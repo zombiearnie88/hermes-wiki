@@ -14,6 +14,8 @@ The plugin should follow the useful ideas from `code-donor/OpenKB`, but it shoul
 - Document ingest target for v1: OpenKB short-doc parity
 - Long-doc strategy: defer `PageIndex` integration and do not implement long-doc support in v1
 
+V2 long-document planning now lives in `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md`.
+
 ## V1 Scope
 
 ### In scope
@@ -58,9 +60,10 @@ The plugin should follow the useful ideas from `code-donor/OpenKB`, but it shoul
 ### Root workspace layout
 
 ```text
+AGENTS.md
 raw/
 wiki/
-  AGENTS.md
+  SCHEMA.md
   index.md
   log.md
   sources/
@@ -72,6 +75,8 @@ wiki/
   config.yaml
   hashes.json
 ```
+
+The root `AGENTS.md` is agent-facing runtime guidance for Hermes. `wiki/SCHEMA.md` is the compiler-facing wiki content contract.
 
 ### Proposed package layout
 
@@ -184,7 +189,8 @@ V1 behavior for long docs:
 - [ ] Implement workspace discovery and validation
 - [ ] Implement `wiki init`
 - [ ] Create `raw/`, `wiki/`, `.hermeskb/`
-- [ ] Write default `wiki/AGENTS.md`
+- [ ] Write default root `AGENTS.md`
+- [ ] Write default `wiki/SCHEMA.md`
 - [ ] Write default `wiki/index.md`
 - [ ] Write default `wiki/log.md`
 - [ ] Write `.hermeskb/config.yaml`

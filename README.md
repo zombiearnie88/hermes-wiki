@@ -6,31 +6,37 @@ The project follows the useful workflow and content model from `OpenKB`, but it 
 
 ## Status
 
-This repository is in early development.
+The plugin supports short-document wiki ingest and PageIndex-backed long-PDF ingest.
 
-Current scaffold includes:
+Current capabilities include:
 
 - Hermes plugin packaging and registration
 - Hermes plugin tools for workspace init, ingest, status, config, and listing
 - `wiki init`, `wiki add`, and `wiki status` command surfaces
 - Workspace initialization for `raw/`, `wiki/`, and `.hermeskb/`
 - Short-document conversion pipeline for markdown, text, csv, pdf, and MarkItDown-backed formats
+- PageIndex-backed long-PDF ingest above `long_doc_threshold`
+- Guarded long-document retrieval tools for document structure and selected page ranges
 - Hermes `AIAgent`-based summary/concept compiler structure
 - Test coverage for workspace commands, conversion paths, compiler writes, and runtime integration
 
-Current v1 boundary:
+Current boundary:
 
-- short-document workflows only
-- no PageIndex-backed long-document support yet
+- long PDFs are supported through PageIndex
+- long Markdown and MarkItDown-backed long documents are still deferred
+- retrieval is through Hermes wiki tools, not a separate PageIndex chat surface
+
+See `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md` for the detailed implementation plan.
 
 ## Workspace Layout
 
 The plugin manages this layout inside a user workspace:
 
 ```text
+AGENTS.md
 raw/
 wiki/
-  AGENTS.md
+  SCHEMA.md
   index.md
   log.md
   sources/
@@ -41,7 +47,10 @@ wiki/
 .hermeskb/
   config.yaml
   hashes.json
+  pageindex/
 ```
+
+The root `AGENTS.md` guides Hermes agents when answering questions from the wiki. `wiki/SCHEMA.md` defines the wiki content contract used by compiler prompts.
 
 ## Repo Layout
 
@@ -56,7 +65,8 @@ wiki/
 This repo does not extend OpenKB directly.
 
 - `OpenKB` is used as a donor reference for workspace structure, conversion flow, and wiki compilation behavior.
-- `PageIndex` is kept as a donor reference only and is intentionally out of the v1 runtime.
+- `PageIndex` is kept as a donor reference only; the runtime implementation is repo-owned.
+- Repo-owned PageIndex runtime code lives under `hermes_wiki/pageindex/`.
 
 The donor repositories are tracked as Git submodules so they stay clearly separated from the Hermes-native implementation.
 
@@ -84,19 +94,27 @@ pip install -e .
 hermes plugins enable hermes-wiki
 ```
 
-If Hermes is loading the plugin from a mounted `hermes_wiki/` directory instead of the pip-installed package, bootstrap the runtime dependencies into the Hermes interpreter explicitly:
+If Hermes is loading the plugin from a mounted `hermes_wiki/` directory instead of the pip-installed package, bootstrap the runtime dependencies into the Hermes interpreter explicitly with `uv pip --python`:
 
 ```bash
-uv pip install --python /opt/hermes/.venv/bin/python json-repair pymupdf 'markitdown[all]'
+uv pip install --python <hermes-runtime-python> json-repair pymupdf 'markitdown[all]'
 ```
 
-For the repo-local Docker stack, run that inside `hermes-clinic`:
+For the repo-local Docker stack, `hermes-clinic` and `hermes-webui` use different Python interpreters. Install into the interpreter that imports the plugin.
+
+For `hermes-clinic`:
 
 ```bash
-docker compose exec -T hermes-clinic uv pip install --python /opt/hermes/.venv/bin/python json-repair pymupdf 'markitdown[all]'
+docker compose exec -T hermes-clinic uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt
 ```
 
-The repo-local `hermes-clinic` container now runs this bootstrap automatically from `hermes_wiki/requirements.txt` before enabling the plugin.
+For `hermes-webui`:
+
+```bash
+docker compose exec -T hermes-webui uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt
+```
+
+The repo-local Docker stack bootstraps `hermes-clinic` directly at startup. It bootstraps WebUI through the one-shot `hermes-webui-plugin-deps` service, which installs `hermes_wiki/requirements.txt` into the shared `/app/venv` volume before `hermes-webui` starts.
 
 If you cloned this repo fresh, initialize donor references too:
 
@@ -124,7 +142,7 @@ hermes-wiki status --workspace .
 - `pymupdf` for PDF ingest
 - `markitdown[all]` for `.docx`, `.pptx`, `.xlsx`, `.html`, and related formats
 
-Install these into the same Python interpreter Hermes uses to import the plugin. In the local container workflow, prefer `uv pip --python /opt/hermes/.venv/bin/python ...` so the runtime environment and the shell environment do not drift apart.
+Install these into the same Python interpreter Hermes uses to import the plugin. In the local container workflow, prefer `uv pip --python <runtime-python> ...` so the runtime environment and the shell environment do not drift apart. The clinic runtime is typically `/opt/hermes/.venv/bin/python`; the WebUI runtime is typically `/app/venv/bin/python3`.
 
 If Hermes is not importable at runtime, generation commands will fail with a clear error.
 
@@ -146,6 +164,8 @@ When the plugin is enabled, Hermes also sees these tools:
 - `wiki_config`
 - `wiki_list`
 - `wiki_deps`
+- `get_document_structure`
+- `get_page_content`
 
 From Hermes CLI subcommands:
 
@@ -182,6 +202,11 @@ model: gpt-5.4-mini
 provider: openai-codex
 language: en
 long_doc_threshold: 20
+pageindex_toc_check_pages: 20
+pageindex_max_pages_per_node: 10
+pageindex_max_tokens_per_node: 20000
+pageindex_summary_token_threshold: 200
+pageindex_max_pages_per_tool_call: 8
 ```
 
 Do not use `openai/gpt-*` model IDs with `provider: openai-codex`; the Codex ChatGPT backend expects model IDs such as `gpt-5.4-mini`, `gpt-5.5`, or `gpt-5.5-mini`.
@@ -189,6 +214,18 @@ Do not use `openai/gpt-*` model IDs with `provider: openai-codex`; the Codex Cha
 `wiki status` reports both capability readiness and the underlying dependency health for the current environment.
 
 If `wiki status` shows missing `json-repair`, `PyMuPDF`, or `MarkItDown`, use `wiki_deps` or repair the Hermes runtime first and then retry ingest. Avoid assuming `python3 -m pip install ...` touched the same interpreter Hermes is running.
+
+### Long PDFs
+
+PDFs with page counts greater than or equal to `long_doc_threshold` are copied to `raw/` and compiled through PageIndex. The wiki summary uses `doc_type: pageindex`, stores compact structure under `wiki/summaries/`, and writes PageIndex state to `.hermeskb/pageindex/{doc_name}/`:
+
+```text
+index.json
+pages.jsonl
+audit.json
+```
+
+Use `get_document_structure` first to inspect the tree, then `get_page_content` with a narrow selector such as `"5"`, `"5-7"`, or `"3,8"`. `get_page_content` rejects out-of-range and too-large requests; it never returns a whole long document by convenience mode.
 
 ## Bundled Skill
 
@@ -200,10 +237,11 @@ skill_view("hermes-wiki:wiki-operator")
 
 Plugin skills are explicit-load only. They do not appear in Hermes' normal available-skills index, so the fully qualified plugin name is required.
 
-Supported v1 ingest types:
+Supported ingest types:
 
 - Native paths: `.md`, `.markdown`, `.txt`, `.csv`, `.pdf`
 - MarkItDown-backed: `.docx`, `.pptx`, `.xlsx`, `.html`, `.htm`
+- Long PDFs: PageIndex-backed when they meet or exceed `long_doc_threshold`
 
 ## Development
 
@@ -223,9 +261,11 @@ After the Docker stack is running, you can verify the plugin mount and discovery
 ./docker/smoke-test-plugin.sh
 ```
 
-The script verifies real plugin discovery in `hermes-clinic` and checks the mounted plugin payload in `hermes-webui`. If the WebUI image does not include the Hermes CLI Python dependencies, it falls back to mount and container-health checks there.
+The script verifies real `PluginManager.discover_and_load()` state in both `hermes-clinic` and `hermes-webui`, and checks WebUI imports against `/app/venv/bin/python3`.
 
-The repo-local clinic startup now bootstraps the wiki plugin dependencies before enabling the plugin, and the smoke test verifies those imports in `/opt/hermes/.venv/bin/python`.
+A plugin can be enabled in `config.yaml` but disabled at runtime if import fails. For example, `plugins.enabled: [hermes-wiki]` with `plugins.disabled: []` can still produce `PluginManager` state `enabled=False` when the loader records an error such as `No module named 'hermes_wiki'`. In that case, inspect runtime plugin state rather than relying only on `hermes plugins list`.
+
+The repo-local clinic startup and WebUI dependency bootstrap service install the wiki plugin dependencies, and the smoke test verifies those imports in `/opt/hermes/.venv/bin/python` and `/app/venv/bin/python3`.
 
 ### Docker Development Reloads
 
@@ -235,7 +275,7 @@ Restart behavior depends on what is being tested:
 
 - For one-off `docker compose exec hermes-clinic ... hermes ...` commands, Python source changes usually do not need a restart because each command starts a fresh Python process.
 - For the running WebUI, restart `hermes-webui` after Python, plugin registration, schema, or bundled skill changes so loaded modules and plugin metadata refresh.
-- For `hermes_wiki/requirements.txt` changes, restart `hermes-clinic` or rerun the startup install command manually: `uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt`.
+- For `hermes_wiki/requirements.txt` changes, reinstall dependencies into the affected runtime with `uv pip --python`. Use `/opt/hermes/.venv/bin/python` for `hermes-clinic` and `/app/venv/bin/python3` for `hermes-webui`.
 - For `docker/docker-compose.yml`, volume, image, or environment changes, recreate the affected containers with `docker compose up -d --force-recreate`.
 
 From `docker/`, restart the WebUI with:
@@ -249,6 +289,6 @@ docker compose restart hermes-webui
 - New runtime code should live in `hermes_wiki/`
 - `hermes_wiki/` is also the directory-plugin source mounted by the local Docker setup
 - Do not build on LiteLLM for plugin generation paths
-- Do not route long documents through PageIndex in v1
+- Long PDFs route through PageIndex; long non-PDF documents are still deferred
 
-See `AGENTS.md` and `plans/IMPLEMENTATION_PLAN.md` for the current working rules and roadmap.
+See `AGENTS.md`, `plans/IMPLEMENTATION_PLAN.md`, and `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md` for the current working rules and roadmap.

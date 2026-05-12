@@ -9,3 +9,5 @@ provides_tools:
   - wiki_config
   - wiki_list
   - wiki_deps
+  - get_document_structure
+  - get_page_content

@@ -9,19 +9,21 @@ The product direction is to clone the useful workflow from `code-donor/OpenKB`, 
 ## Source of Truth
 
 - `code-donor/OpenKB/` is a reference donor, not the runtime target
-- `code-donor/PageIndex/` is a reference donor for later long-doc work, not a v1 dependency
+- `code-donor/PageIndex/` is a reference donor for v2 long-doc work, not a v1 dependency
 - New implementation work should live in new repo-owned plugin code, not inside donor folders
+- V2 PageIndex planning lives in `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md`
 
 ## Core Decisions
 
 - Use Hermes plugin commands, not an OpenKB standalone CLI
 - Use Hermes `AIAgent`, not LiteLLM
 - Use workspace layout:
+  - `AGENTS.md`
   - `raw/`
   - `wiki/`
   - `.hermeskb/`
 - Target OpenKB short-doc parity for v1
-- Defer long-doc `PageIndex` support to a later phase
+- Defer long-doc `PageIndex` support to v2
 
 ## V1 Scope
 
@@ -50,9 +52,10 @@ The product direction is to clone the useful workflow from `code-donor/OpenKB`, 
 The plugin should manage this layout:
 
 ```text
+AGENTS.md
 raw/
 wiki/
-  AGENTS.md
+  SCHEMA.md
   index.md
   log.md
   sources/
@@ -64,6 +67,8 @@ wiki/
   config.yaml
   hashes.json
 ```
+
+Root `AGENTS.md` is agent-facing runtime guidance for Hermes. `wiki/SCHEMA.md` is the compiler-facing wiki content contract.
 
 ## Reuse Rules
 
@@ -108,8 +113,10 @@ Rationale:
 
 ## Prompt and Content Rules
 
-- keep `wiki/AGENTS.md` as the runtime wiki schema file
-- read `wiki/AGENTS.md` from disk at compile time
+- keep root `AGENTS.md` as the Hermes agent instruction file
+- keep `wiki/SCHEMA.md` as the wiki content/schema file
+- read `wiki/SCHEMA.md` from disk at compile time
+- do not introduce `wiki/AGENTS.md`
 - preserve OpenKB-style page types:
   - summary pages
   - concept pages
@@ -146,7 +153,7 @@ Build in this order:
 - keep donor-derived behavior intact unless there is a clear Hermes reason to change it
 - isolate donor references from new runtime code
 - avoid adding compatibility layers for LiteLLM
-- fail clearly on unsupported long-doc workflows
+- fail clearly on unsupported long-doc workflows in v1
 - add tests around file writes, index updates, and generated-JSON parsing
 
 ## Success Criteria

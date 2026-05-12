@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 
 import hermes_wiki.tools as plugin_tools
+from hermes_wiki.pageindex.store import write_pageindex
+from hermes_wiki.pageindex.types import PageIndexBuildResult, PageRecord
+from hermes_wiki.workspace import init_workspace, workspace_paths
 
 
 def test_wiki_init_returns_success_json(monkeypatch) -> None:
@@ -219,3 +222,56 @@ def test_wiki_deps_classifies_failure_output(monkeypatch) -> None:
     assert payload["action"] == "wiki_deps"
     assert payload["install"] == "all"
     assert payload["error"] == "ERROR dependency install failed: uv is unavailable"
+
+
+def test_pageindex_tools_return_structure_and_guarded_pages(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    init_workspace(workspace, model="test/model", language="en", long_doc_threshold=2)
+    paths = workspace_paths(workspace)
+    write_pageindex(
+        paths,
+        PageIndexBuildResult(
+            doc_name="paper",
+            page_count=3,
+            doc_description="Overview",
+            structure=[{"title": "Intro", "node_id": "0001", "start_index": 1, "end_index": 3}],
+            pages=[
+                PageRecord(page=1, content="page one"),
+                PageRecord(page=2, content="page two"),
+                PageRecord(page=3, content="page three"),
+            ],
+        ),
+    )
+
+    structure_payload = json.loads(
+        plugin_tools.get_document_structure({"doc_name": "paper", "workspace": str(workspace)})
+    )
+    content_payload = json.loads(
+        plugin_tools.get_page_content({"doc_name": "paper", "pages": "1,3", "workspace": str(workspace)})
+    )
+
+    assert structure_payload["ok"] is True
+    assert structure_payload["page_count"] == 3
+    assert structure_payload["structure"][0]["title"] == "Intro"
+    assert content_payload["ok"] is True
+    assert content_payload["pages"] == [
+        {"page": 1, "content": "page one"},
+        {"page": 3, "content": "page three"},
+    ]
+
+
+def test_pageindex_tool_errors_are_structured(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    init_workspace(workspace, model="test/model", language="en", long_doc_threshold=2)
+
+    missing_payload = json.loads(
+        plugin_tools.get_document_structure({"doc_name": "missing", "workspace": str(workspace)})
+    )
+    invalid_payload = json.loads(
+        plugin_tools.get_page_content({"doc_name": "missing", "pages": "bad", "workspace": str(workspace)})
+    )
+
+    assert missing_payload["ok"] is False
+    assert missing_payload["action"] == "get_document_structure"
+    assert "PageIndex document not found" in missing_payload["error"]
+    assert invalid_payload["ok"] is False
