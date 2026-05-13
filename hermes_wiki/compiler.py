@@ -20,7 +20,7 @@ You are Hermes Wiki's compilation agent for a personal knowledge base.
 {schema_md}
 
 Write all content in {language} language.
-Use [[wikilinks]] to connect related pages such as [[concepts/attention]].
+Use [[wikilinks]] only for pages the prompt explicitly asks you to link or pages that already exist in supplied wiki context.
 """
 
 _SUMMARY_USER = """\
@@ -32,20 +32,22 @@ Full text:
 Write a summary page for this document in Markdown.
 
 Return a JSON object with two keys:
-- "brief": A single sentence under 100 characters describing the document's main contribution
-- "content": The full summary in Markdown. Include key concepts, findings, and [[wikilinks]] to concepts that could become concept pages
+- "brief": A single sentence (under 100 chars) describing the document's main contribution
+- "content": The full summary in Markdown. Include key concepts, findings, ideas, \
+and [[wikilinks]] to concepts that could become cross-document concept pages
 
 Return ONLY valid JSON, no fences.
 """
 
 _PAGEINDEX_SUMMARY_USER = """\
-New long document: {doc_name}
-Page count: {page_count}
+This is a PageIndex summary for long document "{doc_name}" (page count: {page_count}):
 
-Generated PageIndex summary:
 {summary}
 
-Based on this PageIndex summary and structure, decide concept updates. Do not assume access to full long-document text.
+Based on this structured summary, write a concise overview that captures \
+the key themes and findings. This will be used to generate concept pages.
+
+Return ONLY the Markdown content (no frontmatter, no code fences).
 """
 
 _CONCEPTS_PLAN_USER = """\
@@ -58,47 +60,52 @@ Existing concept pages:
 
 Return a JSON object with three keys:
 
-1. "create" - new concepts not covered by any existing page. Array of objects:
+1. "create" — new concepts not covered by any existing page. Array of objects:
    {{"name": "concept-slug", "title": "Human-Readable Title"}}
 
-2. "update" - existing concepts that have significant new information from this document worth integrating. Array of objects:
+2. "update" — existing concepts that have significant new information from \
+this document worth integrating. Array of objects:
    {{"name": "existing-slug", "title": "Existing Title"}}
 
-3. "related" - existing concepts tangentially related to this document but not needing content changes. Array of slug strings.
+3. "related" — existing concepts tangentially related to this document but \
+not needing content changes, just a cross-reference link. Array of slug strings.
 
 Rules:
-- For the first few documents, create at most 2-3 foundational concepts.
-- Do not create a concept that overlaps with an existing one. Use "update" instead.
-- Do not create concepts that are just the document topic itself.
-- "related" is for lightweight cross-linking only.
+- For the first few documents, create 2-3 foundational concepts at most.
+- Do NOT create a concept that overlaps with an existing one — use "update".
+- Do NOT create concepts that are just the document topic itself.
+- "related" is for lightweight cross-linking only, no content rewrite needed.
 
 Return ONLY valid JSON, no fences, no explanation.
 """
 
 _CONCEPT_PAGE_USER = """\
-Document name: {doc_name}
+Write the concept page for: {title}
 
-Based on the summary above, write the concept page for: {title}
+This concept relates to the document "{doc_name}" summarized above.
 
 Return a JSON object with two keys:
-- "brief": A single sentence under 100 characters defining this concept
-- "content": The full concept page in Markdown. Include clear explanation, key details from the source document, and [[wikilinks]] to related concepts and [[summaries/{doc_name}]]
+- "brief": A single sentence (under 100 chars) defining this concept
+- "content": The full concept page in Markdown. Include clear explanation, \
+key details from the source document, and [[wikilinks]] to related concepts \
+and [[summaries/{doc_name}]]
 
 Return ONLY valid JSON, no fences.
 """
 
 _CONCEPT_UPDATE_USER = """\
-Document name: {doc_name}
-
-Based on the summary above, update the concept page for: {title}
+Update the concept page for: {title}
 
 Current content of this page:
 {existing_content}
 
-Integrate the new information naturally and rewrite the full page. Do not just append. Maintain existing [[wikilinks]] and add new ones where appropriate.
+New information from document "{doc_name}" (summarized above) should be \
+integrated into this page. Rewrite the full page incorporating the new \
+information naturally — do not just append. Maintain existing \
+[[wikilinks]] and add new ones where appropriate.
 
 Return a JSON object with two keys:
-- "brief": A single sentence under 100 characters defining this concept
+- "brief": A single sentence (under 100 chars) defining this concept (may differ from before)
 - "content": The rewritten full concept page in Markdown
 
 Return ONLY valid JSON, no fences.
