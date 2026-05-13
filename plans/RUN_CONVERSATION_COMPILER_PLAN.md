@@ -192,6 +192,6 @@ python -m pytest
 
 ## Deferred Work
 
-- Concurrent concept generation using fresh agents and immutable `base_history`.
+- Concurrent concept generation using fresh agents and immutable `base_history`; see `plans/AIAGENT_CONCURRENT_CONCEPT_GENERATION_PLAN.md`.
 - Long-document PageIndex parity.
 - Usage/cache telemetry surfaced from Hermes result metadata, if available.

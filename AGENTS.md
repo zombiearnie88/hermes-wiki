@@ -105,6 +105,8 @@ When generating summaries or concepts:
 - keep generation deterministic where possible
 - do not share one `AIAgent` across concurrent tasks
 - start with sequential concept generation in v1
+- if concept concurrency is added, bound it and keep a fresh `AIAgent` per concept task
+- keep concept file writes, backlinks, and index updates serial after concurrent generation finishes
 
 Rationale:
 

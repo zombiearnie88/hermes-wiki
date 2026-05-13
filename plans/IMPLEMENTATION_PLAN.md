@@ -152,6 +152,7 @@ Rules:
 - Keep generation tool access locked down when possible
 - Do not share one `AIAgent` across concurrent tasks
 - Start with sequential concept generation in v1
+- Future opt-in concept concurrency should use fresh `AIAgent` instances per task; see `AIAGENT_CONCURRENT_CONCEPT_GENERATION_PLAN.md`
 
 Suggested wrapper behavior:
 
@@ -218,6 +219,7 @@ V1 behavior for long docs:
 - [ ] Port index update helpers
 - [ ] Implement `compile_short_doc()`
 - [ ] Keep concept generation sequential in v1
+- [ ] Defer opt-in concurrent concept generation to `AIAGENT_CONCURRENT_CONCEPT_GENERATION_PLAN.md`
 
 ### Phase 5: Command workflow
 
