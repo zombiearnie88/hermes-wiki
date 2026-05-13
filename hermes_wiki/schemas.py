@@ -5,7 +5,9 @@ WIKI_INIT = {
     "name": "wiki_init",
     "description": (
         "Initialize a Hermes wiki workspace with raw/, wiki/, and .hermeskb/. "
-        "Use this when the user wants to create a new wiki workspace or set its initial model, provider, language, or long-doc threshold."
+        "Use this when the user wants to create a new wiki workspace or set its initial model, provider, language, or long-doc threshold. "
+        "When initializing a new wiki and domain is not already known, ask the user what domain the wiki covers. "
+        "Ask for a specific answer, translate the answer to concise English if needed, then pass the English domain."
     ),
     "parameters": {
         "type": "object",
@@ -29,6 +31,14 @@ WIKI_INIT = {
             "long_doc_threshold": {
                 "type": "integer",
                 "description": "Page-count threshold where PDFs route to PageIndex long-document ingest.",
+            },
+            "domain": {
+                "type": "string",
+                "description": (
+                    "Specific concise English domain the wiki covers, such as 'AI safety evaluations for frontier language models'. "
+                    "Ask the user for a specific domain before initialization when it is not already known, translate non-English answers to English before passing this value, and preserve the user's intended meaning. "
+                    "The value is written into wiki/SCHEMA.md exactly as provided."
+                ),
             },
         },
     },

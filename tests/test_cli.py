@@ -7,6 +7,7 @@ import hermes_wiki.cli as cli
 
 def test_run_args_init_and_status(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
+    domain = "AI safety evaluations for frontier language models"
     parser = cli.build_parser()
 
     init_args = parser.parse_args([
@@ -18,16 +19,20 @@ def test_run_args_init_and_status(tmp_path: Path) -> None:
         "test-provider",
         "--language",
         "en",
+        "--domain",
+        domain,
     ])
     init_output = cli.run_args(init_args)
 
     status_args = parser.parse_args(["status", "--workspace", str(workspace)])
     status_output = cli.run_args(status_args)
+    schema_text = (workspace / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
 
     assert "Initialized Hermes wiki workspace" in init_output
     assert "Workspace: " in status_output
     assert "Model: test/model" in status_output
     assert "Provider: test-provider" in status_output
+    assert f"## Domain\n{domain}" in schema_text
 
 
 def test_main_prints_output(tmp_path: Path, capsys) -> None:

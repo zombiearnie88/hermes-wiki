@@ -17,6 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--provider", default=DEFAULT_CONFIG["provider"])
     init_parser.add_argument("--language", default=DEFAULT_CONFIG["language"])
     init_parser.add_argument("--long-doc-threshold", type=int, default=DEFAULT_CONFIG["long_doc_threshold"])
+    init_parser.add_argument("--domain", default=None)
 
     add_parser = subcommands.add_parser("add", help="Add a file or directory to a Hermes wiki workspace")
     add_parser.add_argument("path")
@@ -47,7 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run_args(args: argparse.Namespace) -> str:
     if args.command == "init":
-        return _run_init(args.path, args.model, args.language, args.long_doc_threshold, provider=args.provider)
+        return _run_init(
+            args.path,
+            args.model,
+            args.language,
+            args.long_doc_threshold,
+            provider=args.provider,
+            domain=args.domain,
+        )
     if args.command == "add":
         return _run_add(args.path, args.workspace, args.model, args.language, args.provider)
     if args.command == "status":

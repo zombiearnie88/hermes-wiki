@@ -158,6 +158,12 @@ Build in this order:
 - fail clearly on unsupported long-doc workflows in v1
 - add tests around file writes, index updates, and generated-JSON parsing
 
+## Docker Runtime Reload
+
+- When plugin Python code, schemas, slash commands, or bundled skills change, recreate Hermes Docker containers when possible so runtime imports and skill registrations are refreshed.
+- Prefer `docker compose -f docker/docker-compose.yml up -d --force-recreate hermes-clinic hermes-webui` for this repo's local Docker setup.
+- Existing wiki workspaces keep their current `AGENTS.md` and `wiki/SCHEMA.md`; recreate/restart only reloads plugin runtime code and bundled skill files.
+
 ## Success Criteria
 
 - the repo contains a real Hermes plugin, not just a donor fork

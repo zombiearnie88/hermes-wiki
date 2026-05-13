@@ -77,7 +77,7 @@ def register(ctx) -> None:
         "wiki-init",
         handler=handle_wiki_init_command,
         description="Initialize a Hermes wiki workspace",
-        args_hint="[path] [--model MODEL] [--provider PROVIDER] [--language LANG]",
+        args_hint="[path] [--model MODEL] [--provider PROVIDER] [--language LANG] [--domain DOMAIN]",
     )
     ctx.register_command(
         "wiki-add",

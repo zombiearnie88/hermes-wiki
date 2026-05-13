@@ -28,6 +28,7 @@ def test_run_init_and_status_round_trip(tmp_path: Path) -> None:
 
     init_output = commands._run_init(str(workspace), "test/model", "fr", 12)
     status_output = commands._run_status(str(workspace))
+    schema_text = (workspace / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
 
     assert "Initialized Hermes wiki workspace" in init_output
     assert (workspace / "raw").is_dir()
@@ -41,6 +42,35 @@ def test_run_init_and_status_round_trip(tmp_path: Path) -> None:
     assert "Concept generation concurrency: 3" in status_output
     assert "Capabilities:" in status_output
     assert "Dependencies:" in status_output
+    assert "Unspecified. Ask the user to clarify the wiki domain before major ingest." in schema_text
+
+
+def test_run_init_writes_domain_schema_and_agent_guidance(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    domain = "AI safety evaluations for frontier language models"
+
+    commands._run_init(str(workspace), "test/model", "en", 20, domain=domain)
+
+    schema_text = (workspace / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
+    agents_text = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert f"## Domain\n{domain}" in schema_text
+    assert "## PageIndex Summary Rules" in schema_text
+    assert "`doc_type: short`" in schema_text
+    assert "`doc_type: pageindex`" in schema_text
+    assert "wiki/SCHEMA.md" in agents_text
+    assert "## Summary Frontmatter" not in agents_text
+
+
+def test_wiki_init_slash_command_accepts_domain(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    domain = "AI safety evals for frontier LLMs"
+
+    output = commands.handle_wiki_init_command(f"{workspace} --domain '{domain}'")
+
+    schema_text = (workspace / "wiki" / "SCHEMA.md").read_text(encoding="utf-8")
+    assert "Initialized Hermes wiki workspace" in output
+    assert f"## Domain\n{domain}" in schema_text
 
 
 def test_run_add_accepts_nested_workspace_override(tmp_path: Path, monkeypatch) -> None:

@@ -9,12 +9,23 @@ from hermes_wiki.workspace import init_workspace, workspace_paths
 
 
 def test_wiki_init_returns_success_json(monkeypatch) -> None:
-    def fake_run_init(path: str, model: str, language: str, long_doc_threshold: int, *, provider: str | None = None) -> str:
+    domain = "AI safety evals for frontier LLMs"
+
+    def fake_run_init(
+        path: str,
+        model: str,
+        language: str,
+        long_doc_threshold: int,
+        *,
+        provider: str | None = None,
+        domain: str | None = None,
+    ) -> str:
         assert path == "/tmp/wiki"
         assert model == "test/model"
         assert provider == "test-provider"
         assert language == "fr"
         assert long_doc_threshold == 42
+        assert domain == "AI safety evals for frontier LLMs"
         return "Initialized Hermes wiki workspace at /tmp/wiki"
 
     monkeypatch.setattr(plugin_tools, "_run_init", fake_run_init)
@@ -27,6 +38,7 @@ def test_wiki_init_returns_success_json(monkeypatch) -> None:
                 "provider": "test-provider",
                 "language": "fr",
                 "long_doc_threshold": 42,
+                "domain": domain,
             }
         )
     )
@@ -34,6 +46,7 @@ def test_wiki_init_returns_success_json(monkeypatch) -> None:
     assert payload["ok"] is True
     assert payload["action"] == "wiki_init"
     assert payload["path"] == "/tmp/wiki"
+    assert payload["domain"] == domain
     assert "Initialized Hermes wiki workspace" in payload["output"]
 
 

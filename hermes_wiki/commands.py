@@ -204,7 +204,15 @@ def _format_status() -> str:
     )
 
 
-def _run_init(path: str, model: str, language: str, long_doc_threshold: int, *, provider: str | None = None) -> str:
+def _run_init(
+    path: str,
+    model: str,
+    language: str,
+    long_doc_threshold: int,
+    *,
+    provider: str | None = None,
+    domain: str | None = None,
+) -> str:
     _validate_settings(model=model, provider=provider, language=language, long_doc_threshold=long_doc_threshold)
     root = Path(path).expanduser().resolve()
     init_workspace(
@@ -213,6 +221,7 @@ def _run_init(path: str, model: str, language: str, long_doc_threshold: int, *, 
         provider=provider,
         language=language,
         long_doc_threshold=long_doc_threshold,
+        domain=domain,
     )
     return "\n".join(
         [
@@ -489,6 +498,7 @@ def _build_init_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--provider", default=DEFAULT_CONFIG["provider"])
     parser.add_argument("--language", default=DEFAULT_CONFIG["language"])
     parser.add_argument("--long-doc-threshold", type=int, default=DEFAULT_CONFIG["long_doc_threshold"])
+    parser.add_argument("--domain", default=None)
     parser.add_argument("-h", "--help", action="store_true")
     return parser
 
@@ -542,11 +552,18 @@ def handle_wiki_init_command(raw_args: str) -> str:
     try:
         args = parser.parse_args(shlex.split(raw_args))
     except SystemExit:
-        return "Usage: /wiki-init [path] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N]"
+        return "Usage: /wiki-init [path] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N] [--domain DOMAIN]"
     if args.help:
-        return "Usage: /wiki-init [path] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N]"
+        return "Usage: /wiki-init [path] [--model MODEL] [--provider PROVIDER] [--language LANG] [--long-doc-threshold N] [--domain DOMAIN]"
     try:
-        return _run_init(args.path, args.model, args.language, args.long_doc_threshold, provider=args.provider)
+        return _run_init(
+            args.path,
+            args.model,
+            args.language,
+            args.long_doc_threshold,
+            provider=args.provider,
+            domain=args.domain,
+        )
     except Exception as exc:
         return f"Failed to initialize workspace: {exc}"
 
@@ -637,6 +654,7 @@ def setup_wiki_cli(subparser) -> None:
     init_parser.add_argument("--provider", default=DEFAULT_CONFIG["provider"])
     init_parser.add_argument("--language", default=DEFAULT_CONFIG["language"])
     init_parser.add_argument("--long-doc-threshold", type=int, default=DEFAULT_CONFIG["long_doc_threshold"])
+    init_parser.add_argument("--domain", default=None)
 
     add_parser = subcommands.add_parser("add", help="Add a file or directory to a Hermes wiki workspace")
     add_parser.add_argument("path")
@@ -668,7 +686,14 @@ def setup_wiki_cli(subparser) -> None:
 def handle_wiki_cli(args) -> None:
     try:
         if args.wiki_command == "init":
-            output = _run_init(args.path, args.model, args.language, args.long_doc_threshold, provider=args.provider)
+            output = _run_init(
+                args.path,
+                args.model,
+                args.language,
+                args.long_doc_threshold,
+                provider=args.provider,
+                domain=args.domain,
+            )
         elif args.wiki_command == "add":
             output = _run_add(args.path, args.workspace, args.model, args.language, args.provider)
         elif args.wiki_command == "status":

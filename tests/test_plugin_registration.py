@@ -57,6 +57,8 @@ def test_register_wires_tools_commands_and_skills() -> None:
         "wiki-list",
         "wiki-deps",
     ]
+    wiki_init_command = next(command for command in ctx.commands if command["name"] == "wiki-init")
+    assert "--domain DOMAIN" in wiki_init_command["args_hint"]
     wiki_add_command = next(command for command in ctx.commands if command["name"] == "wiki-add")
     assert wiki_add_command["args_hint"] == "<path> [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG]"
     assert len(ctx.cli_commands) == 1
@@ -65,6 +67,9 @@ def test_register_wires_tools_commands_and_skills() -> None:
     assert ctx.skills[0]["name"] == "wiki-operator"
     assert ctx.skills[0]["path"].name == "SKILL.md"
     assert ctx.skills[0]["path"].exists()
+    assert "domain" in schemas.WIKI_INIT["parameters"]["properties"]
+    assert "translate the answer to concise English" in schemas.WIKI_INIT["description"]
+    assert "written into wiki/SCHEMA.md exactly as provided" in schemas.WIKI_INIT["parameters"]["properties"]["domain"]["description"]
     assert schemas.WIKI_ADD["parameters"]["required"] == ["path"]
     assert "provider" in schemas.WIKI_CONFIG["parameters"]["properties"]
 
@@ -157,3 +162,10 @@ def test_docker_compose_mounts_plugin_directory_directly() -> None:
     assert "uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt" in compose_text
     assert "- ..:/opt/hermes-wiki:ro" not in compose_text
     assert "cp /opt/hermes-wiki" not in compose_text
+
+
+def test_wiki_operator_skill_tells_agent_to_translate_domain_to_english() -> None:
+    skill_text = (PLUGIN_DIR / "skills" / "wiki-operator" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "translate the domain to concise English before initialization" in skill_text
+    assert "init writes that value into `wiki/SCHEMA.md`" in skill_text

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import DEFAULT_CONFIG, load_config, save_config
-from .schema import DEFAULT_AGENTS_MD, DEFAULT_SCHEMA_MD
+from .schema import build_agents_md, build_schema_md
 from .state import HashRegistry
 
 
@@ -101,6 +101,7 @@ def init_workspace(
     provider: str | None = None,
     language: str,
     long_doc_threshold: int,
+    domain: str | None = None,
 ) -> WorkspacePaths:
     paths = workspace_paths(root)
     existing = [
@@ -121,8 +122,8 @@ def init_workspace(
     paths.state_dir.mkdir(parents=True, exist_ok=False)
     paths.pageindex_dir.mkdir(parents=True, exist_ok=False)
 
-    paths.schema_path.write_text(DEFAULT_SCHEMA_MD, encoding="utf-8")
-    paths.agents_path.write_text(DEFAULT_AGENTS_MD, encoding="utf-8")
+    paths.schema_path.write_text(build_schema_md(domain), encoding="utf-8")
+    paths.agents_path.write_text(build_agents_md(), encoding="utf-8")
     paths.index_path.write_text(
         "# Knowledge Base Index\n\n## Documents\n\n## Concepts\n\n## Explorations\n",
         encoding="utf-8",

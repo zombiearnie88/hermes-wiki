@@ -35,7 +35,7 @@ Use the plugin tools first when they are available:
 If slash commands are the active surface in the current Hermes session, use:
 
 ```text
-/wiki-init <path>
+/wiki-init <path> --domain <domain>
 /wiki-status [--workspace <path>]
 /wiki-list [--workspace <path>]
 /wiki-config --workspace <path> --model <model> --provider <provider> ...
@@ -46,7 +46,7 @@ If slash commands are the active surface in the current Hermes session, use:
 If plugin tools are unavailable but terminal access is available, use the Hermes CLI subcommands:
 
 ```bash
-hermes wiki init <path>
+hermes wiki init <path> --domain <domain>
 hermes wiki status --workspace <path>
 hermes wiki list --workspace <path>
 hermes wiki config --workspace <path> --model <model> --provider <provider> ...
@@ -57,7 +57,7 @@ hermes wiki deps [--install core|pdf|office|all]
 Use the standalone `hermes-wiki` executable only as a development fallback outside a Hermes runtime:
 
 ```bash
-hermes-wiki init <path>
+hermes-wiki init <path> --domain <domain>
 hermes-wiki status --workspace <path>
 hermes-wiki list --workspace <path>
 hermes-wiki config --workspace <path> --model <model> --provider <provider> ...
@@ -83,12 +83,22 @@ Do not manually create or rewrite the wiki structure unless the user explicitly 
 - Prefer one workspace path per task and keep using the same path consistently.
 - If the workspace already exists, do not reinitialize it unless the user asks.
 
+## Initialization
+
+- Resolve the intended workspace path before calling `wiki_init`.
+- Ask the user what domain the wiki covers unless the domain is already specified.
+- Ask for specificity, for example `AI safety evals for frontier LLMs`, not just `AI`.
+- If the user answers in another language, translate the domain to concise English before initialization.
+- If translating would change meaning or the answer is ambiguous, ask one clarification before initialization.
+- Pass the concise English domain as `domain` to `wiki_init`, `/wiki-init`, or the CLI init command; init writes that value into `wiki/SCHEMA.md`.
+- If initialization must run non-interactively without a domain, the tool will write an unspecified-domain placeholder; clarify the domain before major ingest.
+
 ## Operating Procedure
 
 1. Resolve the intended workspace path.
 2. If the user wants to inspect or ingest an existing workspace, check status first when practical.
 3. Read the `Capabilities:` section before attempting ingest so you know whether generation or format support is blocked.
-4. If the user asks to initialize a workspace, run `wiki_init` or the equivalent CLI command.
+4. If the user asks to initialize a workspace, ask for a specific domain unless already known, translate it to concise English if needed, then run `wiki_init` or the equivalent CLI command with the English `domain`.
 5. If the user asks to ingest content, use `wiki_add` with the correct workspace path.
 6. If the user asks what is already present, use `wiki_list`.
 7. Report the plugin output clearly, especially for blocked capabilities, skipped files, PageIndex builds, and guarded retrieval errors.

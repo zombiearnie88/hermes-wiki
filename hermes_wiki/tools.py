@@ -46,15 +46,16 @@ def wiki_init(args: dict, **kwargs) -> str:
     model = args.get("model") or DEFAULT_CONFIG["model"]
     provider = args.get("provider") or DEFAULT_CONFIG["provider"]
     language = args.get("language") or DEFAULT_CONFIG["language"]
+    domain = args.get("domain") or None
     long_doc_threshold = args.get("long_doc_threshold")
     if long_doc_threshold is None:
         long_doc_threshold = DEFAULT_CONFIG["long_doc_threshold"]
 
     try:
-        output = _run_init(path, model, language, int(long_doc_threshold), provider=provider)
+        output = _run_init(path, model, language, int(long_doc_threshold), provider=provider, domain=domain)
     except Exception as exc:
-        return _failure("wiki_init", str(exc), path=path)
-    return _wrap_output("wiki_init", output, path=path)
+        return _failure("wiki_init", str(exc), path=path, domain=domain)
+    return _wrap_output("wiki_init", output, path=path, domain=domain)
 
 
 def wiki_add(args: dict, **kwargs) -> str:
