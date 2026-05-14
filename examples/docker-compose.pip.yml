@@ -1,0 +1,94 @@
+# Fresh pip-install example for hermes-wiki.
+# This stack does not reuse repo-local docker/data, profiles, auth, or bind-mounted plugin code.
+
+services:
+  hermes-agent-src-init:
+    image: nousresearch/hermes-agent:latest
+    restart: "no"
+    command: version
+    volumes:
+      - hermes-agent-src:/opt/hermes
+    networks:
+      - hermes-example
+
+  hermes-agent:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-wiki-example-agent
+    restart: unless-stopped
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -lc
+      - |
+        uv pip install --python /opt/hermes/.venv/bin/python "$${HERMES_WIKI_PACKAGE}"
+        /opt/hermes/.venv/bin/hermes plugins enable hermes-wiki
+        exec sleep infinity
+    volumes:
+      - hermes-agent-src:/opt/hermes
+      - hermes-home:/opt/data/profiles/default
+    environment:
+      HERMES_HOME: /opt/data/profiles/default
+      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-git+https://github.com/zombiearnie88/hermes-wiki.git}
+    networks:
+      - hermes-example
+
+  hermes-webui-plugin-install:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    restart: "no"
+    user: "0"
+    command:
+      - sh
+      - -lc
+      - |
+        if [ ! -x /app/venv/bin/python3 ]; then
+          uv venv /app/venv
+        fi
+        uv pip install --python /app/venv/bin/python3 "$${HERMES_WIKI_PACKAGE}"
+        chmod -R a+rX /app/venv
+    volumes:
+      - hermes-webui-venv:/app/venv
+    environment:
+      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-git+https://github.com/zombiearnie88/hermes-wiki.git}
+    networks:
+      - hermes-example
+
+  hermes-webui:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    container_name: hermes-wiki-example-webui
+    restart: unless-stopped
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+      hermes-agent:
+        condition: service_started
+      hermes-webui-plugin-install:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${HERMES_WEBUI_PORT:-8787}:8787"
+    volumes:
+      - hermes-home:/home/hermeswebui/.hermes
+      - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
+      - hermes-webui-venv:/app/venv
+      - hermes-workspace:/workspace
+    environment:
+      HERMES_HOME: /home/hermeswebui/.hermes
+      HERMES_CONFIG_PATH: /home/hermeswebui/.hermes/config.yaml
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: "8787"
+      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui_state
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+      HERMES_SKIP_CHMOD: "1"
+    networks:
+      - hermes-example
+
+networks:
+  hermes-example:
+    driver: bridge
+
+volumes:
+  hermes-agent-src:
+  hermes-home:
+  hermes-webui-venv:
+  hermes-workspace:

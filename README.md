@@ -86,6 +86,26 @@ The donor repositories are tracked as Git submodules so they stay clearly separa
 
 ## Installation
 
+### Pip install from GitHub
+
+For a Hermes runtime that supports Python entry-point plugins, install `hermes-wiki` into the same Python environment that runs Hermes:
+
+```bash
+uv pip install --python <hermes-runtime-python> git+https://github.com/zombiearnie88/hermes-wiki.git
+hermes plugins enable hermes-wiki
+```
+
+For the repo-local Docker runtime paths this means:
+
+```bash
+uv pip install --python /opt/hermes/.venv/bin/python git+https://github.com/zombiearnie88/hermes-wiki.git
+uv pip install --python /app/venv/bin/python3 git+https://github.com/zombiearnie88/hermes-wiki.git
+```
+
+Pip installation uses the `hermes_agent.plugins` entry point declared in `pyproject.toml`. It does not copy files into `~/.hermes/plugins/hermes-wiki/`; that directory is only for directory-plugin installs.
+
+For the detailed publishing workflow, see `plans/PIP_PUBLISHING_PLAN.md`.
+
 ### Plugin development install
 
 From this repo:
@@ -257,6 +277,8 @@ python3 -m venv .venv
 ```
 
 ### Docker Smoke Test
+
+For Docker examples that install the plugin from GitHub with pip, including fresh local smoke tests and production-style VPS/Mac mini deployments, see `examples/README.md`.
 
 After the Docker stack is running, you can verify the plugin mount and discovery wiring with:
 
