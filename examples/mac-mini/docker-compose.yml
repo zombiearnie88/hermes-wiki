@@ -1,0 +1,133 @@
+# Self-contained production Mac mini example for hermes-wiki.
+#
+# Persistent user data is bind-mounted into /Users/Shared/hermes by default:
+# - ${HERMES_HOME_DIR} keeps Hermes config, auth, sessions, logs, and plugin enablement.
+# - ${HERMES_WORKSPACE_DIR} keeps wiki workspaces and source documents.
+#
+# Runtime internals stay in Docker named volumes:
+# - hermes-agent-src stores the Hermes Agent runtime from the image.
+# - hermes-webui-venv stores the WebUI Python environment with hermes-wiki installed.
+
+services:
+  hermes-agent-src-init:
+    image: nousresearch/hermes-agent:latest
+    restart: "no"
+    command: version
+    volumes:
+      - hermes-agent-src:/opt/hermes
+    networks:
+      - hermes-private
+
+  hermes-agent-plugin-install:
+    image: nousresearch/hermes-agent:latest
+    restart: "no"
+    user: "0"
+    entrypoint: sh
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+    command:
+      - -lc
+      - |
+        set -eu
+        chown -R "$${HERMES_UID}:$${HERMES_GID}" /opt/hermes /opt/data/profiles/default
+        uv pip install --python /opt/hermes/.venv/bin/python "$${HERMES_WIKI_PACKAGE}"
+        plugin_src="$(/opt/hermes/.venv/bin/python -c 'import pathlib, hermes_wiki; print(pathlib.Path(hermes_wiki.__file__).resolve().parent)')"
+        mkdir -p "$${HERMES_HOME}/plugins"
+        rm -rf "$${HERMES_HOME}/plugins/hermes-wiki"
+        cp -R "$${plugin_src}" "$${HERMES_HOME}/plugins/hermes-wiki"
+        /opt/hermes/.venv/bin/hermes plugins enable hermes-wiki
+        chown -R "$${HERMES_UID}:$${HERMES_GID}" /opt/hermes /opt/data/profiles/default
+    volumes:
+      - hermes-agent-src:/opt/hermes
+      - ${HERMES_HOME_DIR:-/Users/Shared/hermes/home}:/opt/data/profiles/default
+      - ${HERMES_WORKSPACE_DIR:-/Users/Shared/hermes/workspace}:/workspace
+    environment:
+      HERMES_HOME: /opt/data/profiles/default
+      HERMES_UID: ${HERMES_UID:-501}
+      HERMES_GID: ${HERMES_GID:-20}
+      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.0.tar.gz}
+    networks:
+      - hermes-private
+
+  hermes-agent:
+    image: nousresearch/hermes-agent:latest
+    restart: unless-stopped
+    depends_on:
+      hermes-agent-plugin-install:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -lc
+      - exec sleep infinity
+    shm_size: ${HERMES_SHM_SIZE:-1g}
+    volumes:
+      - hermes-agent-src:/opt/hermes
+      - ${HERMES_HOME_DIR:-/Users/Shared/hermes/home}:/opt/data/profiles/default
+      - ${HERMES_WORKSPACE_DIR:-/Users/Shared/hermes/workspace}:/workspace
+    environment:
+      HERMES_HOME: /opt/data/profiles/default
+      HERMES_UID: ${HERMES_UID:-501}
+      HERMES_GID: ${HERMES_GID:-20}
+    networks:
+      - hermes-private
+
+  hermes-webui-plugin-install:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    restart: "no"
+    user: "0"
+    command:
+      - sh
+      - -lc
+      - |
+        set -eu
+        if [ ! -x /app/venv/bin/python3 ]; then
+          uv venv /app/venv
+        fi
+        uv pip install --python /app/venv/bin/python3 "$${HERMES_WIKI_PACKAGE}"
+        chmod -R a+rwX /app/venv
+    volumes:
+      - hermes-webui-venv:/app/venv
+    environment:
+      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.0.tar.gz}
+    networks:
+      - hermes-private
+
+  hermes-webui:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    restart: unless-stopped
+    depends_on:
+      hermes-agent-src-init:
+        condition: service_completed_successfully
+      hermes-agent:
+        condition: service_started
+      hermes-webui-plugin-install:
+        condition: service_completed_successfully
+    ports:
+      - "${HERMES_WEBUI_BIND_IP:-127.0.0.1}:${HERMES_WEBUI_PORT:-8787}:8787"
+    shm_size: ${HERMES_SHM_SIZE:-1g}
+    volumes:
+      - ${HERMES_HOME_DIR:-/Users/Shared/hermes/home}:/home/hermeswebui/.hermes
+      - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
+      - hermes-webui-venv:/app/venv
+      - ${HERMES_WORKSPACE_DIR:-/Users/Shared/hermes/workspace}:/workspace
+    environment:
+      HERMES_HOME: /home/hermeswebui/.hermes
+      HERMES_CONFIG_PATH: /home/hermeswebui/.hermes/config.yaml
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: "8787"
+      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui_state
+      HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
+      HERMES_SKIP_CHMOD: ${HERMES_SKIP_CHMOD:-1}
+      WANTED_UID: ${HERMES_UID:-501}
+      WANTED_GID: ${HERMES_GID:-20}
+    networks:
+      - hermes-private
+
+networks:
+  hermes-private:
+    driver: bridge
+
+volumes:
+  hermes-agent-src:
+  hermes-webui-venv:

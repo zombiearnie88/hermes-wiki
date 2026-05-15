@@ -1,0 +1,19 @@
+# Copy this file to profiles.yaml when you want custom profile settings.
+# If profiles.yaml is absent, mac-mini.sh uses this example file.
+
+profiles:
+  - id: code
+    webui_port: 8787
+    gateway_port: 8642
+    dashboard_port: 9119
+    bind_ip: 127.0.0.1
+    dashboard_tui: false
+    api_server_key: local-code-api-key
+
+  - id: research
+    webui_port: 8788
+    gateway_port: 8643
+    dashboard_port: 9120
+    bind_ip: 127.0.0.1
+    dashboard_tui: false
+    api_server_key: local-research-api-key
