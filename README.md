@@ -55,7 +55,8 @@ The root `AGENTS.md` guides Hermes agents when answering questions from the wiki
 
 ## Repo Layout
 
-- `hermes_wiki/` - Hermes plugin directory and implementation source of truth
+- `plugin.yaml`, `__init__.py`, and `requirements.txt` - repo-root Hermes directory-plugin wrapper for Git/dashboard installs
+- `hermes_wiki/` - internal implementation package imported by the root plugin wrapper
 - `code-donor/OpenKB/` - donor reference for short-doc wiki workflow
 - `code-donor/PageIndex/` - donor reference for future long-doc support
 - `AGENTS.md` - repo guidance and implementation rules
@@ -86,39 +87,49 @@ The donor repositories are tracked as Git submodules so they stay clearly separa
 
 ## Installation
 
-### Pip install from GitHub
+### Git/dashboard install
 
-For a Hermes runtime that supports Python entry-point plugins, install `hermes-wiki` into the same Python environment that runs Hermes:
-
-```bash
-uv pip install --python <hermes-runtime-python> git+https://github.com/zombiearnie88/hermes-wiki.git
-hermes plugins enable hermes-wiki
-```
-
-For the repo-local Docker runtime paths this means:
+Install the plugin from the Hermes Agent dashboard or with the Hermes CLI:
 
 ```bash
-uv pip install --python /opt/hermes/.venv/bin/python git+https://github.com/zombiearnie88/hermes-wiki.git
-uv pip install --python /app/venv/bin/python3 git+https://github.com/zombiearnie88/hermes-wiki.git
+hermes plugins install --enable https://github.com/zombiearnie88/hermes-wiki.git
+hermes wiki deps --install all
+hermes gateway restart
 ```
 
-Pip installation uses the `hermes_agent.plugins` entry point declared in `pyproject.toml`. It does not copy files into `~/.hermes/plugins/hermes-wiki/`; that directory is only for directory-plugin installs.
+Dashboard users should use this repository URL:
 
-For the detailed publishing workflow, see `plans/PIP_PUBLISHING_PLAN.md`.
+```text
+https://github.com/zombiearnie88/hermes-wiki.git
+```
 
-### Plugin development install
+`hermes plugins install` clones the repository root into the Hermes plugin directory. The repo root contains `plugin.yaml` and `__init__.py`, so no manual copy or directory repair step is required.
 
-From this repo:
+Hermes does not install plugin Python dependencies automatically. Run `hermes wiki deps --install all` in the Hermes runtime after installing the plugin. For Docker deployments where Agent and WebUI use different Python environments, install dependencies in both runtimes if WebUI imports plugin code directly.
+
+### Pip development install
+
+Pip installation is a development and packaging fallback, not the primary deployment path. For editable local development from this repo:
 
 ```bash
 pip install -e .
 hermes plugins enable hermes-wiki
 ```
 
-If Hermes is loading the plugin from a mounted `hermes_wiki/` directory instead of the pip-installed package, bootstrap the runtime dependencies into the Hermes interpreter explicitly with `uv pip --python`:
+For the detailed packaging workflow, see `plans/PIP_PUBLISHING_PLAN.md`.
+
+### Plugin dependency repair
+
+If Hermes is loading the plugin from a mounted directory plugin, bootstrap the runtime dependencies into the Hermes interpreter explicitly with `uv pip --python`:
 
 ```bash
 uv pip install --python <hermes-runtime-python> json-repair pymupdf 'markitdown[all]'
+```
+
+Or install from the plugin root requirements file:
+
+```bash
+uv pip install --python <hermes-runtime-python> -r <plugin-root>/requirements.txt
 ```
 
 For the repo-local Docker stack, `hermes-clinic` and `hermes-webui` use different Python interpreters. Install into the interpreter that imports the plugin.
@@ -135,7 +146,7 @@ For `hermes-webui`:
 docker compose exec -T hermes-webui uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt
 ```
 
-The repo-local Docker stack bootstraps `hermes-clinic` directly at startup. It bootstraps WebUI through the one-shot `hermes-webui-plugin-deps` service, which installs `hermes_wiki/requirements.txt` into the shared `/app/venv` volume before `hermes-webui` starts.
+The repo-local Docker stack bootstraps `hermes-clinic` directly at startup. It bootstraps WebUI through the one-shot `hermes-webui-plugin-deps` service, which installs the root `requirements.txt` into the shared `/app/venv` volume before `hermes-webui` starts.
 
 If you cloned this repo fresh, initialize donor references too:
 
@@ -143,9 +154,9 @@ If you cloned this repo fresh, initialize donor references too:
 git submodule update --init --recursive
 ```
 
-Hermes discovers the plugin through the `hermes_agent.plugins` entry point, but general plugins are opt-in, so `hermes plugins enable hermes-wiki` is still required before the plugin loads.
+Hermes discovers Git/dashboard installs through `plugin.yaml` at the repository root. General plugins are opt-in, so use `hermes plugins install --enable ...` or enable `hermes-wiki` after installation.
 
-For directory-plugin workflows, `hermes_wiki/` is the self-contained plugin directory. It contains the registration module, schemas, handlers, bundled skills, and `plugin.yaml`.
+For directory-plugin workflows, the repository root is the self-contained plugin directory. It contains the plugin wrapper and manifest, while `hermes_wiki/` contains schemas, handlers, bundled skills, and runtime implementation code.
 
 For local development outside Hermes, the package also exposes a small standalone CLI:
 
@@ -278,7 +289,7 @@ python3 -m venv .venv
 
 ### Docker Smoke Test
 
-For Docker examples that install the plugin from GitHub with pip, including fresh local smoke tests and production-style VPS/Mac mini deployments, see `examples/README.md`.
+For Docker examples that install the plugin from GitHub or guide dashboard installation, including fresh local smoke tests and production-style VPS/Mac mini deployments, see `examples/README.md`.
 
 After the Docker stack is running, you can verify the plugin mount and discovery wiring with:
 
@@ -288,19 +299,19 @@ After the Docker stack is running, you can verify the plugin mount and discovery
 
 The script verifies real `PluginManager.discover_and_load()` state in both `hermes-clinic` and `hermes-webui`, and checks WebUI imports against `/app/venv/bin/python3`.
 
-A plugin can be enabled in `config.yaml` but disabled at runtime if import fails. For example, `plugins.enabled: [hermes-wiki]` with `plugins.disabled: []` can still produce `PluginManager` state `enabled=False` when the loader records an error such as `No module named 'hermes_wiki'`. In that case, inspect runtime plugin state rather than relying only on `hermes plugins list`.
+A plugin can be enabled in `config.yaml` but disabled at runtime if import fails. For example, `plugins.enabled: [hermes-wiki]` with `plugins.disabled: []` can still produce `PluginManager` state `enabled=False` when the loader records an error such as `No module named 'hermes_wiki'`. After the repo-root plugin layout, that usually means the cloned plugin directory is incomplete, corrupted, or mounted from the wrong path. Inspect runtime plugin state rather than relying only on `hermes plugins list`.
 
 The repo-local clinic startup and WebUI dependency bootstrap service install the wiki plugin dependencies, and the smoke test verifies those imports in `/opt/hermes/.venv/bin/python` and `/app/venv/bin/python3`.
 
 ### Docker Development Reloads
 
-The repo-local Docker stack bind-mounts `hermes_wiki/` into both `hermes-clinic` and `hermes-webui`, so source edits are visible inside running containers immediately.
+The repo-local Docker stack bind-mounts the repository root into both `hermes-clinic` and `hermes-webui` as the `hermes-wiki` plugin directory, so source edits are visible inside running containers immediately.
 
 Restart behavior depends on what is being tested:
 
 - For one-off `docker compose exec hermes-clinic ... hermes ...` commands, Python source changes usually do not need a restart because each command starts a fresh Python process.
 - For the running WebUI, restart `hermes-webui` after Python, plugin registration, schema, or bundled skill changes so loaded modules and plugin metadata refresh.
-- For `hermes_wiki/requirements.txt` changes, reinstall dependencies into the affected runtime with `uv pip --python`. Use `/opt/hermes/.venv/bin/python` for `hermes-clinic` and `/app/venv/bin/python3` for `hermes-webui`.
+- For root `requirements.txt` changes, reinstall dependencies into the affected runtime with `uv pip --python`. Use `/opt/hermes/.venv/bin/python` for `hermes-clinic` and `/app/venv/bin/python3` for `hermes-webui`.
 - For `docker/docker-compose.yml`, volume, image, or environment changes, recreate the affected containers with `docker compose up -d --force-recreate`.
 
 From `docker/`, restart the WebUI with:
@@ -312,7 +323,7 @@ docker compose restart hermes-webui
 ## Development Notes
 
 - New runtime code should live in `hermes_wiki/`
-- `hermes_wiki/` is also the directory-plugin source mounted by the local Docker setup
+- The repository root is the directory-plugin source mounted by the local Docker setup
 - Do not build on LiteLLM for plugin generation paths
 - Long PDFs route through PageIndex; long non-PDF documents are still deferred
 

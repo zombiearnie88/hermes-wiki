@@ -1,18 +1,20 @@
 # Examples
 
-## Which Compose File To Use
+## Which Example To Use
 
-| File | Use Case | Persistent Data Location |
+| Path | Use Case | Persistent Data Location |
 |---|---|---|
-| `docker-compose.pip.yml` | Fresh local smoke test from GitHub install | Docker named volumes only |
-| `docker-compose.production-vps.yml` | Public VPS deployment with HTTPS through Caddy | Host bind mounts under `/srv/hermes` by default |
-| `docker-compose.production-mac-mini.yml` | Mac mini deployment for local or LAN access | Host bind mounts under `/Users/Shared/hermes` by default |
+| `docker-compose.pip.yml` | Fresh local smoke test from Git plugin install | Docker named volumes only |
+| `docker-compose.production-vps.yml` | Public VPS deployment with HTTPS through Traefik | Host bind mounts under `/srv/hermes` by default |
+| `mac-mini/` | Zip-friendly Mac mini deployment bundle for local or LAN access | Host bind mounts under `/Users/Shared/hermes` by default |
 
 For production, back up the host bind-mounted directories. The named volumes in these examples are runtime internals that can be recreated.
 
-## Fresh Docker Pip Install
+## Fresh Docker Git Install
 
-`docker-compose.pip.yml` starts a clean Hermes Agent and WebUI stack that installs `hermes-wiki` from GitHub with `uv pip install`.
+`docker-compose.pip.yml` starts a clean Hermes Agent and WebUI stack that installs `hermes-wiki` from the GitHub repository with `hermes plugins install --enable`.
+
+The example installs the repo root as the Hermes directory plugin, then runs `hermes wiki deps --install all` in the Agent runtime. WebUI dependencies are installed from the cloned plugin root `requirements.txt` if WebUI imports plugin code directly.
 
 It intentionally does not reuse the repo-local `docker/` directory, existing profiles, auth files, workspaces, or bind-mounted plugin source.
 
@@ -28,10 +30,10 @@ Open WebUI:
 http://127.0.0.1:8787
 ```
 
-Pin a release tag:
+Override the repository URL:
 
 ```bash
-HERMES_WIKI_PACKAGE='git+https://github.com/zombiearnie88/hermes-wiki.git@v0.1.0' \
+HERMES_WIKI_REPO='https://github.com/zombiearnie88/hermes-wiki.git' \
   docker compose -f examples/docker-compose.pip.yml up -d
 ```
 
@@ -48,11 +50,11 @@ docker compose -f examples/docker-compose.pip.yml exec hermes-agent \
   /opt/hermes/.venv/bin/hermes plugins list
 ```
 
-Verify the package import in the WebUI runtime:
+Verify WebUI runtime dependencies:
 
 ```bash
 docker compose -f examples/docker-compose.pip.yml exec -u 0 hermes-webui \
-  /app/venv/bin/python3 -c "import hermes_wiki; assert callable(hermes_wiki.register)"
+  /app/venv/bin/python3 -c "import json_repair, fitz, markitdown"
 ```
 
 Reset all example state:
@@ -65,7 +67,14 @@ This removes the named volumes used by the example, including Hermes home, WebUI
 
 ## Production VPS
 
-`docker-compose.production-vps.yml` is intended for a public VPS with DNS pointing at the server. It exposes only Caddy on ports `80` and `443`; `hermes-webui` is reachable only inside the Docker network.
+`docker-compose.production-vps.yml` is intended for a public VPS with DNS pointing at the server. It exposes only Traefik on ports `80` and `443`; `hermes-agent` and `hermes-webui` are reachable only inside the Docker network.
+
+Public routes:
+
+| URL | Target |
+|---|---|
+| `https://ai.rubiklab.vip` | Hermes WebUI |
+| `https://panel.rubiklab.vip` | Hermes Agent dashboard |
 
 Create persistent host directories:
 
@@ -77,9 +86,15 @@ sudo chown -R 1000:1000 /srv/hermes
 Set deployment variables:
 
 ```bash
-export HERMES_DOMAIN=hermes.example.com
-export HERMES_WIKI_PACKAGE='git+https://github.com/zombiearnie88/hermes-wiki.git@v0.1.0'
+export ACME_EMAIL=admin@example.com
+export HERMES_API_SERVER_KEY='replace-with-random-secret'
+export HERMES_WEBUI_PASSWORD='replace-with-random-password'
+export HERMES_DASHBOARD_BASIC_AUTH='admin:$apr1$4jLM/vx0$b4q14IjUlu4WBch8qkQz2/'
 ```
+
+`examples/env.vps.example` includes a generated dashboard BasicAuth password. If you put an APR1 hash in a Compose env file, keep dollar signs doubled as `$$` so Compose does not interpolate them.
+
+Ensure DNS for `ai.rubiklab.vip` and `panel.rubiklab.vip` points at the VPS before starting the stack.
 
 Start it:
 
@@ -87,18 +102,27 @@ Start it:
 docker compose -f examples/docker-compose.production-vps.yml up -d
 ```
 
-Verify plugin state in the Hermes Agent runtime:
+Validate the public WebUI and dashboard routes:
 
 ```bash
-docker compose -f examples/docker-compose.production-vps.yml exec hermes-agent \
-  /opt/hermes/.venv/bin/hermes plugins list
+curl -I https://ai.rubiklab.vip
+curl -I https://panel.rubiklab.vip
 ```
 
-Verify the package import in the WebUI runtime:
+Install `hermes-wiki` from the Hermes Agent dashboard after deployment:
+
+```text
+https://panel.rubiklab.vip
+https://github.com/zombiearnie88/hermes-wiki.git
+```
+
+Or install from the Hermes Agent runtime:
 
 ```bash
-docker compose -f examples/docker-compose.production-vps.yml exec -u 0 hermes-webui \
-  /app/venv/bin/python3 -c "import hermes_wiki; assert callable(hermes_wiki.register)"
+docker compose -f examples/docker-compose.production-vps.yml exec -T -u 1000:1000 hermes-agent \
+  /opt/hermes/.venv/bin/hermes plugins install --enable https://github.com/zombiearnie88/hermes-wiki.git
+docker compose -f examples/docker-compose.production-vps.yml exec -T -u 1000:1000 hermes-agent \
+  /opt/hermes/.venv/bin/hermes wiki deps --install all
 ```
 
 Back up production data:
@@ -107,36 +131,29 @@ Back up production data:
 sudo tar -czf hermes-backup.tgz /srv/hermes
 ```
 
-Update to a new plugin tag:
+Update the stack images:
 
 ```bash
-export HERMES_WIKI_PACKAGE='git+https://github.com/zombiearnie88/hermes-wiki.git@v0.1.1'
-docker compose -f examples/docker-compose.production-vps.yml up -d --force-recreate \
-  hermes-agent-plugin-install hermes-webui-plugin-install
-docker compose -f examples/docker-compose.production-vps.yml restart hermes-agent hermes-webui
+docker compose -f examples/docker-compose.production-vps.yml pull
+docker compose -f examples/docker-compose.production-vps.yml up -d
 ```
 
 ## Production Mac Mini
 
-`docker-compose.production-mac-mini.yml` is intended for Docker Desktop or a local Docker Engine on a Mac mini. It does not include Caddy. By default it binds WebUI to `127.0.0.1:8787`.
+`examples/mac-mini/` is a self-contained folder intended for Docker Desktop or a local Docker Engine on a Mac mini. It includes its own `docker-compose.yml`, `mac-mini.sh`, env example, and runbook.
 
-Create persistent host directories:
+Create a portable zip from the repo root:
 
 ```bash
-sudo mkdir -p /Users/Shared/hermes/home /Users/Shared/hermes/workspace
-sudo chown -R $(id -u):$(id -g) /Users/Shared/hermes
+(cd examples && zip -r ../hermes-wiki-mac-mini.zip mac-mini -x 'mac-mini/mac-mini.env' 'mac-mini/profiles.yaml' 'mac-mini/docker-compose.profiles.generated.yml' 'mac-mini/__pycache__/*' 'mac-mini/.DS_Store')
 ```
 
-Set a pinned plugin package:
+After unzipping on a Mac, start local-only access:
 
 ```bash
-export HERMES_WIKI_PACKAGE='git+https://github.com/zombiearnie88/hermes-wiki.git@v0.1.0'
-```
-
-Start it for local-only access:
-
-```bash
-docker compose -f examples/docker-compose.production-mac-mini.yml up -d
+cd mac-mini
+chmod +x mac-mini.sh
+./mac-mini.sh bootstrap-local
 ```
 
 Open WebUI on the Mac mini:
@@ -145,19 +162,21 @@ Open WebUI on the Mac mini:
 http://127.0.0.1:8787
 ```
 
-To expose WebUI on your LAN, bind to all interfaces:
+For LAN access:
 
 ```bash
-HERMES_WEBUI_BIND_IP=0.0.0.0 docker compose -f examples/docker-compose.production-mac-mini.yml up -d
+./mac-mini.sh bootstrap-lan
+```
+
+For the YAML-driven `code` and `research` profile stack:
+
+```bash
+./mac-mini.sh profiles-bootstrap-local
 ```
 
 Do not expose the Mac mini WebUI directly to the public internet without a reverse proxy, TLS, and an access-control layer.
 
-Back up production data:
-
-```bash
-sudo tar -czf hermes-mac-mini-backup.tgz /Users/Shared/hermes
-```
+For full operation details, auth helpers, updates, backup, and troubleshooting, see `examples/mac-mini/README.md`.
 
 ## Production Volume Strategy
 
@@ -167,9 +186,9 @@ Production examples use this split:
 |---|---|---|
 | Hermes home/config/state | Host bind mount | Needs backup and inspection |
 | Workspace/wiki data | Host bind mount | User/business data |
-| Hermes Agent runtime | Docker named volume | Recreated from image |
-| WebUI Python venv | Docker named volume | Recreated by install service |
-| Caddy cert state on VPS | Docker named volume | Managed by Caddy, can also be backed up separately |
+| Hermes Agent runtime | Docker named volume | Copied from the Agent image on first startup for WebUI use |
+| WebUI Python venv | Docker named volume | Recreated by WebUI startup |
+| Traefik cert state on VPS | Docker named volume | Managed by Traefik, can also be backed up separately |
 
 Remove only containers while keeping data:
 

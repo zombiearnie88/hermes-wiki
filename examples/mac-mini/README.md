@@ -76,7 +76,7 @@ HERMES_WEBUI_BIND_IP=127.0.0.1
 HERMES_WEBUI_PORT=8787
 HERMES_HOME_DIR=/Users/Shared/hermes/home
 HERMES_WORKSPACE_DIR=/Users/Shared/hermes/workspace
-HERMES_WIKI_PACKAGE=https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.0.tar.gz
+HERMES_WIKI_REPO=https://github.com/zombiearnie88/hermes-wiki.git
 ```
 
 ## Multi-Profile Stack
@@ -246,10 +246,10 @@ Run Hermes auth commands inside the Hermes Agent container:
 
 ## Updates
 
-Update to a new plugin tag by editing `HERMES_WIKI_PACKAGE` in `mac-mini.env`:
+Update to a different plugin source by editing `HERMES_WIKI_REPO` in `mac-mini.env`:
 
 ```bash
-HERMES_WIKI_PACKAGE=https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.1.tar.gz
+HERMES_WIKI_REPO=https://github.com/zombiearnie88/hermes-wiki.git
 ```
 
 Then rerun installers and restart runtime services:

@@ -30,7 +30,7 @@ services:
     volumes:
       - ./data/hermes-home:/opt/data
       - hermes-agent-src:/opt/hermes
-      - ../hermes_wiki:/opt/data/profiles/clinic/plugins/hermes-wiki:ro
+      - ..:/opt/data/profiles/clinic/plugins/hermes-wiki:ro
     environment:
       HERMES_HOME: /opt/data/profiles/clinic
       HERMES_UID: ${HERMES_UID}
@@ -56,7 +56,7 @@ services:
         chown -R "$${WANTED_UID}:$${WANTED_GID}" /app/venv
     volumes:
       - ./data/hermes-home/profiles/clinic:/home/hermeswebui/.hermes
-      - ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki:ro
+      - ..:/home/hermeswebui/.hermes/plugins/hermes-wiki:ro
       - hermes-webui-venv:/app/venv
     environment:
       WANTED_UID: ${HERMES_UID}
@@ -80,7 +80,7 @@ services:
     volumes:
       - ./data/hermes-home/profiles/clinic:/home/hermeswebui/.hermes
       - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
-      - ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki
+      - ..:/home/hermeswebui/.hermes/plugins/hermes-wiki
       - hermes-webui-venv:/app/venv
       - ./data/hermes-home/profiles/clinic/workspace:/workspace
       - ./data/hermes-home/profiles/clinic/workspace:/opt/data/profiles/clinic/workspace

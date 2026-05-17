@@ -74,21 +74,24 @@ def test_register_wires_tools_commands_and_skills() -> None:
     assert "provider" in schemas.WIKI_CONFIG["parameters"]["properties"]
 
 
-def test_plugin_directory_is_self_contained() -> None:
-    plugin_yaml = (PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8")
+def test_repo_root_is_directory_plugin_wrapper() -> None:
+    plugin_yaml = (ROOT / "plugin.yaml").read_text(encoding="utf-8")
 
     assert "name: hermes-wiki" in plugin_yaml
+    assert "version: 0.1.1" in plugin_yaml
     assert "provides_tools:" in plugin_yaml
-    assert not (ROOT / "plugin.yaml").exists()
-    assert not (ROOT / "__init__.py").exists()
+    assert (ROOT / "__init__.py").exists()
+    assert (ROOT / "requirements.txt").exists()
+    assert (ROOT / "after-install.md").exists()
     assert (PLUGIN_DIR / "__init__.py").exists()
     assert (PLUGIN_DIR / "schemas.py").exists()
     assert (PLUGIN_DIR / "tools.py").exists()
-    assert (PLUGIN_DIR / "requirements.txt").exists()
+    assert not (PLUGIN_DIR / "plugin.yaml").exists()
+    assert not (PLUGIN_DIR / "requirements.txt").exists()
     assert (PLUGIN_DIR / "skills" / "wiki-operator" / "SKILL.md").exists()
 
 
-def test_plugin_loads_under_hermes_directory_module_name() -> None:
+def test_root_plugin_loads_under_hermes_directory_module_name() -> None:
     module_name = "hermes_plugins.hermes_wiki"
 
     def is_target_module(name: str) -> bool:
@@ -123,8 +126,8 @@ def test_plugin_loads_under_hermes_directory_module_name() -> None:
     try:
         spec = importlib.util.spec_from_file_location(
             module_name,
-            PLUGIN_DIR / "__init__.py",
-            submodule_search_locations=[str(PLUGIN_DIR)],
+            ROOT / "__init__.py",
+            submodule_search_locations=[str(ROOT)],
         )
         assert spec is not None
         assert spec.loader is not None
@@ -153,13 +156,15 @@ def test_plugin_loads_under_hermes_directory_module_name() -> None:
         sys.modules.update(saved_modules)
 
 
-def test_docker_compose_mounts_plugin_directory_directly() -> None:
+def test_docker_compose_mounts_repo_root_plugin_directly() -> None:
     compose_text = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert "- ../hermes_wiki:/opt/data/profiles/clinic/plugins/hermes-wiki:ro" in compose_text
-    assert "- ../hermes_wiki:/home/hermeswebui/.hermes/plugins/hermes-wiki" in compose_text
+    assert "- ..:/opt/data/profiles/clinic/plugins/hermes-wiki:ro" in compose_text
+    assert "- ..:/home/hermeswebui/.hermes/plugins/hermes-wiki:ro" in compose_text
+    assert "- ..:/home/hermeswebui/.hermes/plugins/hermes-wiki" in compose_text
     assert "uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt" in compose_text
     assert "uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt" in compose_text
+    assert "../hermes_wiki" not in compose_text
     assert "- ..:/opt/hermes-wiki:ro" not in compose_text
     assert "cp /opt/hermes-wiki" not in compose_text
 

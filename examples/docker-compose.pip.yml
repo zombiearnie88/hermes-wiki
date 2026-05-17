@@ -1,4 +1,4 @@
-# Fresh pip-install example for hermes-wiki.
+# Fresh Git install example for hermes-wiki.
 # This stack does not reuse repo-local docker/data, profiles, auth, or bind-mounted plugin code.
 
 services:
@@ -22,15 +22,16 @@ services:
       - sh
       - -lc
       - |
-        uv pip install --python /opt/hermes/.venv/bin/python "$${HERMES_WIKI_PACKAGE}"
-        /opt/hermes/.venv/bin/hermes plugins enable hermes-wiki
+        set -eu
+        /opt/hermes/.venv/bin/hermes plugins install --force --enable "$${HERMES_WIKI_REPO}"
+        /opt/hermes/.venv/bin/hermes wiki deps --install all
         exec sleep infinity
     volumes:
       - hermes-agent-src:/opt/hermes
       - hermes-home:/opt/data/profiles/default
     environment:
       HERMES_HOME: /opt/data/profiles/default
-      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-git+https://github.com/zombiearnie88/hermes-wiki.git}
+      HERMES_WIKI_REPO: ${HERMES_WIKI_REPO:-https://github.com/zombiearnie88/hermes-wiki.git}
     networks:
       - hermes-example
 
@@ -38,19 +39,25 @@ services:
     image: ghcr.io/nesquena/hermes-webui:latest
     restart: "no"
     user: "0"
+    depends_on:
+      hermes-agent:
+        condition: service_started
     command:
       - sh
       - -lc
       - |
+        set -eu
         if [ ! -x /app/venv/bin/python3 ]; then
           uv venv /app/venv
         fi
-        uv pip install --python /app/venv/bin/python3 "$${HERMES_WIKI_PACKAGE}"
-        chmod -R a+rX /app/venv
+        until [ -f /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt ]; do
+          sleep 2
+        done
+        uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt
+        chmod -R a+rwX /app/venv
     volumes:
+      - hermes-home:/home/hermeswebui/.hermes
       - hermes-webui-venv:/app/venv
-    environment:
-      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-git+https://github.com/zombiearnie88/hermes-wiki.git}
     networks:
       - hermes-example
 

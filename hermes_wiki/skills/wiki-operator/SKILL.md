@@ -1,7 +1,7 @@
 ---
 name: wiki-operator
 description: Operate the hermes-wiki plugin to initialize, inspect, configure, and ingest Hermes wiki workspaces.
-version: 0.1.0
+version: 0.1.1
 author: Thach Duong
 metadata:
   hermes:
@@ -129,7 +129,7 @@ If a needed capability is blocked, say so clearly before continuing.
 
 - A plugin can be enabled in `config.yaml` but disabled at runtime if import fails during plugin loading.
 - For `hermes-webui`, `plugins.enabled: [hermes-wiki]` and `plugins.disabled: []` does not prove that the plugin registered successfully.
-- If the WebUI reports the plugin unavailable, inspect the runtime plugin manager error; `No module named 'hermes_wiki'` usually means a directory-plugin import path problem, not a config disablement.
+- If the WebUI reports the plugin unavailable, inspect the runtime plugin manager error; `No module named 'hermes_wiki'` usually means the repo-root plugin directory is incomplete, corrupted, or mounted from the wrong path.
 - A healthy WebUI container only proves the web server is running; it does not prove plugin import succeeded.
 
 ## Failure Cases

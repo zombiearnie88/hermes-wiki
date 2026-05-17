@@ -6,7 +6,7 @@
 #
 # Runtime internals stay in Docker named volumes:
 # - hermes-agent-src stores the Hermes Agent runtime from the image.
-# - hermes-webui-venv stores the WebUI Python environment with hermes-wiki installed.
+# - hermes-webui-venv stores the WebUI Python environment with hermes-wiki dependencies installed.
 
 services:
   hermes-agent-src-init:
@@ -31,12 +31,8 @@ services:
       - |
         set -eu
         chown -R "$${HERMES_UID}:$${HERMES_GID}" /opt/hermes /opt/data/profiles/default
-        uv pip install --python /opt/hermes/.venv/bin/python "$${HERMES_WIKI_PACKAGE}"
-        plugin_src="$(/opt/hermes/.venv/bin/python -c 'import pathlib, hermes_wiki; print(pathlib.Path(hermes_wiki.__file__).resolve().parent)')"
-        mkdir -p "$${HERMES_HOME}/plugins"
-        rm -rf "$${HERMES_HOME}/plugins/hermes-wiki"
-        cp -R "$${plugin_src}" "$${HERMES_HOME}/plugins/hermes-wiki"
-        /opt/hermes/.venv/bin/hermes plugins enable hermes-wiki
+        /opt/hermes/.venv/bin/hermes plugins install --force --enable "$${HERMES_WIKI_REPO}"
+        /opt/hermes/.venv/bin/hermes wiki deps --install all
         chown -R "$${HERMES_UID}:$${HERMES_GID}" /opt/hermes /opt/data/profiles/default
     volumes:
       - hermes-agent-src:/opt/hermes
@@ -46,7 +42,7 @@ services:
       HERMES_HOME: /opt/data/profiles/default
       HERMES_UID: ${HERMES_UID:-501}
       HERMES_GID: ${HERMES_GID:-20}
-      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.0.tar.gz}
+      HERMES_WIKI_REPO: ${HERMES_WIKI_REPO:-https://github.com/zombiearnie88/hermes-wiki.git}
     networks:
       - hermes-private
 
@@ -76,6 +72,9 @@ services:
     image: ghcr.io/nesquena/hermes-webui:latest
     restart: "no"
     user: "0"
+    depends_on:
+      hermes-agent-plugin-install:
+        condition: service_completed_successfully
     command:
       - sh
       - -lc
@@ -84,12 +83,11 @@ services:
         if [ ! -x /app/venv/bin/python3 ]; then
           uv venv /app/venv
         fi
-        uv pip install --python /app/venv/bin/python3 "$${HERMES_WIKI_PACKAGE}"
+        uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt
         chmod -R a+rwX /app/venv
     volumes:
+      - ${HERMES_HOME_DIR:-/Users/Shared/hermes/home}:/home/hermeswebui/.hermes
       - hermes-webui-venv:/app/venv
-    environment:
-      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.0.tar.gz}
     networks:
       - hermes-private
 

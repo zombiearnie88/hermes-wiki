@@ -142,12 +142,12 @@ HERMES_WEBUI_BIND_IP="${HERMES_WEBUI_BIND_IP:-127.0.0.1}"
 HERMES_WEBUI_PORT="${HERMES_WEBUI_PORT:-8787}"
 HERMES_HOME_DIR="${HERMES_HOME_DIR:-/Users/Shared/hermes/home}"
 HERMES_WORKSPACE_DIR="${HERMES_WORKSPACE_DIR:-/Users/Shared/hermes/workspace}"
-HERMES_WIKI_PACKAGE="${HERMES_WIKI_PACKAGE:-https://github.com/zombiearnie88/hermes-wiki/archive/refs/tags/v0.1.0.tar.gz}"
+HERMES_WIKI_REPO="${HERMES_WIKI_REPO:-https://github.com/zombiearnie88/hermes-wiki.git}"
 HERMES_SHM_SIZE="${HERMES_SHM_SIZE:-1g}"
 HERMES_SKIP_CHMOD="${HERMES_SKIP_CHMOD:-1}"
 
 export HERMES_COMPOSE_PROJECT HERMES_PROFILES_COMPOSE_PROJECT HERMES_UID HERMES_GID HERMES_WEBUI_BIND_IP HERMES_WEBUI_PORT
-export HERMES_HOME_DIR HERMES_WORKSPACE_DIR HERMES_WIKI_PACKAGE
+export HERMES_HOME_DIR HERMES_WORKSPACE_DIR HERMES_WIKI_REPO
 export HERMES_PROFILES_BASE_DIR HERMES_SHM_SIZE HERMES_SKIP_CHMOD
 
 compose() {
@@ -246,7 +246,7 @@ show_config() {
   info "HERMES_WEBUI_PORT=${HERMES_WEBUI_PORT}"
   info "HERMES_HOME_DIR=${HERMES_HOME_DIR}"
   info "HERMES_WORKSPACE_DIR=${HERMES_WORKSPACE_DIR}"
-  info "HERMES_WIKI_PACKAGE=${HERMES_WIKI_PACKAGE}"
+  info "HERMES_WIKI_REPO=${HERMES_WIKI_REPO}"
 }
 
 check_port_free() {
@@ -271,9 +271,12 @@ preflight() {
     info "warning: HERMES_UID:HERMES_GID does not match current user $(id -u):$(id -g)"
   fi
 
-  case "${HERMES_WIKI_PACKAGE}" in
-    git+*)
-      info "warning: git+ package URLs require git inside installer images; release archive URLs are safer for Docker deployment"
+  case "${HERMES_WIKI_REPO}" in
+    https://*.git|http://*.git|git@*)
+      :
+      ;;
+    *)
+      info "warning: HERMES_WIKI_REPO should usually be a Git repository URL for Hermes plugin install"
       ;;
   esac
 
