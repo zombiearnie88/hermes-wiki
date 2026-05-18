@@ -99,6 +99,54 @@ def test_compile_short_doc_writes_summary_concept_and_index(tmp_path: Path, monk
     assert "# Summary\nBody" not in calls[2]["user_message"]
 
 
+def test_compile_short_doc_preserves_full_summary_content(tmp_path: Path, monkeypatch) -> None:
+    workspace_root = tmp_path / "workspace"
+    init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)
+    paths = workspace_paths(workspace_root)
+
+    source_path = paths.wiki_dir / "sources" / "doc.md"
+    source_path.write_text("Example source text", encoding="utf-8")
+    long_summary = "# Summary\n\n" + ("Detailed findings. " * 40) + "tail marker"
+    replies = iter(
+        [
+            json.dumps({"brief": "Short brief", "content": long_summary}),
+            json.dumps({"create": [], "update": [], "related": []}),
+        ]
+    )
+    calls = []
+
+    def fake_generate_conversation(
+        model: str,
+        provider: str | None,
+        user_message: str,
+        *,
+        system_message: str | None = None,
+        conversation_history: list[dict] | None = None,
+        task_id: str | None = None,
+    ) -> GenerationResult:
+        calls.append(
+            {
+                "user_message": user_message,
+                "system_message": system_message,
+                "conversation_history": conversation_history,
+                "task_id": task_id,
+            }
+        )
+        return GenerationResult(final_response=next(replies), messages=[])
+
+    monkeypatch.setattr(compiler, "_generate_conversation", fake_generate_conversation)
+    monkeypatch.setattr(compiler, "_parse_json", lambda text: json.loads(text))
+
+    result = compiler.compile_short_doc("doc", source_path, paths, "test/model", "test-provider")
+    summary_text = (paths.wiki_dir / "summaries" / "doc.md").read_text(encoding="utf-8")
+
+    assert result.doc_brief == "Short brief"
+    assert long_summary in summary_text
+    assert "tail marker" in summary_text
+    assert len(calls) == 2
+    assert calls[1]["conversation_history"][2] == {"role": "assistant", "content": long_summary}
+
+
 def test_compile_short_doc_updates_existing_concept_sources(tmp_path: Path, monkeypatch) -> None:
     workspace_root = tmp_path / "workspace"
     init_workspace(workspace_root, model="test/model", language="en", long_doc_threshold=20)

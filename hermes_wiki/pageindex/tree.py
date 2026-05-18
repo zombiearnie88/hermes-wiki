@@ -82,7 +82,7 @@ def render_tree(structure: list[dict[str, Any]], *, include_summaries: bool = Tr
             line = f"{indent}- [{_range_label(item)}] ({node_id}) {title}"
             summary = str(item.get("summary", "")).strip()
             if include_summaries and summary:
-                line += f": {compact_excerpt(summary, max_chars=220)}"
+                line += f": {summary}"
             lines.append(line)
             children = item.get("nodes")
             if isinstance(children, list):

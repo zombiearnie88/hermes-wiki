@@ -94,3 +94,21 @@ def test_tree_rendering_includes_metadata_but_omits_text() -> None:
     assert "[1-2] (0001) Intro: Intro summary" in rendered
     assert "[3] (0002) Results: Results summary" in rendered
     assert "full text must not render" not in rendered
+
+
+def test_tree_rendering_preserves_full_summary_text() -> None:
+    long_summary = ("Detailed section summary. " * 20) + "tail marker"
+    rendered = render_tree(
+        [
+            {
+                "title": "Long",
+                "node_id": "0001",
+                "start_index": 1,
+                "end_index": 1,
+                "summary": long_summary,
+            }
+        ]
+    )
+
+    assert f"[1] (0001) Long: {long_summary}" in rendered
+    assert "tail marker" in rendered
