@@ -40,16 +40,16 @@ Commands:
   profiles-down-volumes     Stop profile containers plus Docker named runtime volumes
   preflight        Check Docker, UID/GID, port availability, and compose status
   init-storage     Create and chown persistent host storage
-  up-local         Deploy WebUI bound to 127.0.0.1
-  up-lan           Deploy WebUI bound to 0.0.0.0
-  wait-ready       Wait until WebUI responds locally
-  verify           Check containers, plugin enablement, imports, and HTTP access
+  up-local         Deploy Hermes WebUI and Open WebUI bound to 127.0.0.1
+  up-lan           Deploy Hermes WebUI and Open WebUI bound to 0.0.0.0
+  wait-ready       Wait until both WebUIs respond locally
+  verify           Check containers, Hermes API, and HTTP access
   auth [args...]   Run hermes auth inside the Hermes Agent container
   auth-providers   List auth providers available in the Hermes Agent runtime
   ps               Show compose service status
   logs             Show recent deployment logs
-  restart          Restart Hermes Agent and WebUI
-  update           Rerun plugin installers and restart runtime services
+  restart          Restart Hermes Agent, Hermes WebUI, and Open WebUI
+  update           Recreate runtime services after config or image changes
   pull             Pull base images and recreate containers
   down             Stop and remove containers, preserving volumes and host data
   down-volumes     Stop and remove containers plus Docker named runtime volumes
@@ -60,10 +60,11 @@ Options:
   -h, --help       Show this help
 
 Copy-and-run local deploy:
+  cp ${EXAMPLE_ENV_FILE} ${DEFAULT_ENV_FILE}
+  vi ${DEFAULT_ENV_FILE}
   $0 bootstrap-local
 
 Optional customization:
-  cp ${EXAMPLE_ENV_FILE} ${DEFAULT_ENV_FILE}
   cp ${EXAMPLE_PROFILES_FILE} ${DEFAULT_PROFILES_FILE}
   vi ${DEFAULT_ENV_FILE}
   $0 bootstrap-local
@@ -138,6 +139,7 @@ HERMES_PROFILES_COMPOSE_PROJECT="${HERMES_PROFILES_COMPOSE_PROJECT:-hermes-mac-m
 HERMES_PROFILES_BASE_DIR="${HERMES_PROFILES_BASE_DIR:-/Users/Shared/hermes/profiles}"
 HERMES_UID="${HERMES_UID:-$(id -u)}"
 HERMES_GID="${HERMES_GID:-$(id -g)}"
+HERMES_API_SERVER_KEY="${HERMES_API_SERVER_KEY:-}"
 HERMES_WEBUI_BIND_IP="${HERMES_WEBUI_BIND_IP:-127.0.0.1}"
 HERMES_WEBUI_PORT="${HERMES_WEBUI_PORT:-8787}"
 HERMES_HOME_DIR="${HERMES_HOME_DIR:-/Users/Shared/hermes/home}"
@@ -145,12 +147,21 @@ HERMES_WORKSPACE_DIR="${HERMES_WORKSPACE_DIR:-/Users/Shared/hermes/workspace}"
 HERMES_WIKI_REPO="${HERMES_WIKI_REPO:-https://github.com/zombiearnie88/hermes-wiki.git}"
 HERMES_SHM_SIZE="${HERMES_SHM_SIZE:-1g}"
 HERMES_SKIP_CHMOD="${HERMES_SKIP_CHMOD:-1}"
+OPEN_WEBUI_IMAGE="${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main-slim}"
+OPEN_WEBUI_BIND_IP="${OPEN_WEBUI_BIND_IP:-127.0.0.1}"
+OPEN_WEBUI_PORT="${OPEN_WEBUI_PORT:-3000}"
+OPEN_WEBUI_URL="${OPEN_WEBUI_URL:-http://127.0.0.1:${OPEN_WEBUI_PORT}}"
+OPEN_WEBUI_NAME="${OPEN_WEBUI_NAME:-RubikLab Chat}"
+OPEN_WEBUI_DATA_DIR="${OPEN_WEBUI_DATA_DIR:-/Users/Shared/hermes/open-webui}"
+OPEN_WEBUI_SECRET_KEY="${OPEN_WEBUI_SECRET_KEY:-}"
 
-export HERMES_COMPOSE_PROJECT HERMES_PROFILES_COMPOSE_PROJECT HERMES_UID HERMES_GID HERMES_WEBUI_BIND_IP HERMES_WEBUI_PORT
+export HERMES_COMPOSE_PROJECT HERMES_PROFILES_COMPOSE_PROJECT HERMES_UID HERMES_GID HERMES_API_SERVER_KEY HERMES_WEBUI_BIND_IP HERMES_WEBUI_PORT
 export HERMES_HOME_DIR HERMES_WORKSPACE_DIR HERMES_WIKI_REPO
 export HERMES_PROFILES_BASE_DIR HERMES_SHM_SIZE HERMES_SKIP_CHMOD
+export OPEN_WEBUI_IMAGE OPEN_WEBUI_BIND_IP OPEN_WEBUI_PORT OPEN_WEBUI_URL OPEN_WEBUI_NAME OPEN_WEBUI_DATA_DIR OPEN_WEBUI_SECRET_KEY
 
 compose() {
+  require_single_stack_config
   docker compose -p "${HERMES_COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" "$@"
 }
 
@@ -231,6 +242,40 @@ profiles_metadata() {
   run_profiles_generator "${args[@]}"
 }
 
+secret_status() {
+  name="$1"
+  value="${!name:-}"
+  case "${value}" in
+    '') printf 'unset\n' ;;
+    replace-with-*) printf 'placeholder\n' ;;
+    *) printf 'set\n' ;;
+  esac
+}
+
+require_single_stack_config() {
+  invalid=0
+  for name in HERMES_API_SERVER_KEY OPEN_WEBUI_SECRET_KEY; do
+    value="${!name:-}"
+    case "${value}" in
+      ''|replace-with-*)
+        info "${name} is required for the single-stack Open WebUI deployment. Copy ${EXAMPLE_ENV_FILE} to ${DEFAULT_ENV_FILE}, replace the placeholder, and rerun."
+        invalid=1
+        ;;
+    esac
+  done
+  [ "${invalid}" = "0" ] || die 'missing required single-stack secrets'
+}
+
+detect_lan_ip() {
+  for iface in en0 en1; do
+    lan_ip="$(ipconfig getifaddr "${iface}" 2>/dev/null || true)"
+    if [ -n "${lan_ip}" ]; then
+      printf '%s\n' "${lan_ip}"
+      return 0
+    fi
+  done
+}
+
 show_config() {
   info "Bundle dir: ${SCRIPT_DIR}"
   info "Env file: ${ENV_FILE}"
@@ -242,23 +287,34 @@ show_config() {
   info "HERMES_PROFILES_BASE_DIR=${HERMES_PROFILES_BASE_DIR}"
   info "HERMES_UID=${HERMES_UID}"
   info "HERMES_GID=${HERMES_GID}"
+  info "HERMES_API_SERVER_KEY=$(secret_status HERMES_API_SERVER_KEY)"
   info "HERMES_WEBUI_BIND_IP=${HERMES_WEBUI_BIND_IP}"
   info "HERMES_WEBUI_PORT=${HERMES_WEBUI_PORT}"
   info "HERMES_HOME_DIR=${HERMES_HOME_DIR}"
   info "HERMES_WORKSPACE_DIR=${HERMES_WORKSPACE_DIR}"
   info "HERMES_WIKI_REPO=${HERMES_WIKI_REPO}"
+  info "OPEN_WEBUI_IMAGE=${OPEN_WEBUI_IMAGE}"
+  info "OPEN_WEBUI_BIND_IP=${OPEN_WEBUI_BIND_IP}"
+  info "OPEN_WEBUI_PORT=${OPEN_WEBUI_PORT}"
+  info "OPEN_WEBUI_URL=${OPEN_WEBUI_URL}"
+  info "OPEN_WEBUI_NAME=${OPEN_WEBUI_NAME}"
+  info "OPEN_WEBUI_DATA_DIR=${OPEN_WEBUI_DATA_DIR}"
+  info "OPEN_WEBUI_SECRET_KEY=$(secret_status OPEN_WEBUI_SECRET_KEY)"
 }
 
 check_port_free() {
-  info "Checking TCP port ${HERMES_WEBUI_PORT}:"
-  if lsof -nP -iTCP:"${HERMES_WEBUI_PORT}" -sTCP:LISTEN; then
-    die "port ${HERMES_WEBUI_PORT} is already in use"
+  label="$1"
+  port="$2"
+  info "Checking ${label} TCP port ${port}:"
+  if lsof -nP -iTCP:"${port}" -sTCP:LISTEN; then
+    die "port ${port} is already in use"
   fi
-  info "Port ${HERMES_WEBUI_PORT}: free"
+  info "Port ${port}: free"
 }
 
 preflight() {
   show_config
+  require_single_stack_config
   info ""
   docker --version
   docker compose version
@@ -271,17 +327,11 @@ preflight() {
     info "warning: HERMES_UID:HERMES_GID does not match current user $(id -u):$(id -g)"
   fi
 
-  case "${HERMES_WIKI_REPO}" in
-    https://*.git|http://*.git|git@*)
-      :
-      ;;
-    *)
-      info "warning: HERMES_WIKI_REPO should usually be a Git repository URL for Hermes plugin install"
-      ;;
-  esac
-
-  info ""
-  check_port_free
+  if [ "${HERMES_WEBUI_PORT}" = "${OPEN_WEBUI_PORT}" ]; then
+    die "HERMES_WEBUI_PORT and OPEN_WEBUI_PORT must be different"
+  fi
+  check_port_free "Hermes WebUI" "${HERMES_WEBUI_PORT}"
+  check_port_free "Open WebUI" "${OPEN_WEBUI_PORT}"
 
   info ""
   info "Compose stack status:"
@@ -296,54 +346,70 @@ init_storage() {
   info "Creating persistent storage:"
   info "  ${HERMES_HOME_DIR}"
   info "  ${HERMES_WORKSPACE_DIR}"
-  sudo mkdir -p "${HERMES_HOME_DIR}" "${HERMES_WORKSPACE_DIR}"
-  sudo chown -R "${HERMES_UID}:${HERMES_GID}" "${HERMES_HOME_DIR}" "${HERMES_WORKSPACE_DIR}"
-  ls -ld "${HERMES_HOME_DIR}" "${HERMES_WORKSPACE_DIR}"
+  info "  ${OPEN_WEBUI_DATA_DIR}"
+  sudo mkdir -p "${HERMES_HOME_DIR}" "${HERMES_WORKSPACE_DIR}" "${OPEN_WEBUI_DATA_DIR}"
+  sudo chown -R "${HERMES_UID}:${HERMES_GID}" "${HERMES_HOME_DIR}" "${HERMES_WORKSPACE_DIR}" "${OPEN_WEBUI_DATA_DIR}"
+  ls -ld "${HERMES_HOME_DIR}" "${HERMES_WORKSPACE_DIR}" "${OPEN_WEBUI_DATA_DIR}"
 }
 
 up_local() {
   export HERMES_WEBUI_BIND_IP=127.0.0.1
-  info "Deploying local-only WebUI on http://127.0.0.1:${HERMES_WEBUI_PORT}"
+  export OPEN_WEBUI_BIND_IP=127.0.0.1
+  export OPEN_WEBUI_URL="http://127.0.0.1:${OPEN_WEBUI_PORT}"
+  info "Deploying local-only frontends:"
+  info "  Hermes WebUI: http://127.0.0.1:${HERMES_WEBUI_PORT}"
+  info "  Open WebUI: ${OPEN_WEBUI_URL}"
   compose up -d
 }
 
 up_lan() {
   export HERMES_WEBUI_BIND_IP=0.0.0.0
-  info "Deploying LAN WebUI on port ${HERMES_WEBUI_PORT}"
+  export OPEN_WEBUI_BIND_IP=0.0.0.0
+  LAN_IP="$(detect_lan_ip)"
+  if [ -n "${LAN_IP}" ]; then
+    export OPEN_WEBUI_URL="http://${LAN_IP}:${OPEN_WEBUI_PORT}"
+  fi
+
+  info "Deploying LAN frontends:"
+  info "  Hermes WebUI port: ${HERMES_WEBUI_PORT}"
+  info "  Open WebUI URL: ${OPEN_WEBUI_URL}"
   compose up -d
 
-  LAN_IP=""
-  for iface in en0 en1; do
-    LAN_IP="$(ipconfig getifaddr "${iface}" 2>/dev/null || true)"
-    if [ -n "${LAN_IP}" ]; then
-      break
-    fi
-  done
-
   if [ -n "${LAN_IP}" ]; then
-    info "LAN URL: http://${LAN_IP}:${HERMES_WEBUI_PORT}"
+    info "Hermes WebUI LAN URL: http://${LAN_IP}:${HERMES_WEBUI_PORT}"
+    info "Open WebUI LAN URL: http://${LAN_IP}:${OPEN_WEBUI_PORT}"
   else
-    info "LAN URL: http://<mac-mini-lan-ip>:${HERMES_WEBUI_PORT}"
+    info "Hermes WebUI LAN URL: http://<mac-mini-lan-ip>:${HERMES_WEBUI_PORT}"
+    info "Open WebUI LAN URL: http://<mac-mini-lan-ip>:${OPEN_WEBUI_PORT}"
     info "Run 'ipconfig getifaddr en0' or 'ipconfig getifaddr en1' to find the address."
   fi
 }
 
 wait_ready() {
   timeout_seconds="${1:-300}"
+  wait_for_url "Hermes WebUI" "http://127.0.0.1:${HERMES_WEBUI_PORT}" hermes-webui "${timeout_seconds}"
+  wait_for_url "Open WebUI" "http://127.0.0.1:${OPEN_WEBUI_PORT}" open-webui "${timeout_seconds}"
+}
+
+wait_for_url() {
+  name="$1"
+  url="$2"
+  service="$3"
+  timeout_seconds="$4"
   start_seconds="${SECONDS}"
-  info "Waiting up to ${timeout_seconds}s for http://127.0.0.1:${HERMES_WEBUI_PORT}"
+  info "Waiting up to ${timeout_seconds}s for ${name} at ${url}"
 
   while [ $((SECONDS - start_seconds)) -lt "${timeout_seconds}" ]; do
-    if curl -fsS -o /dev/null "http://127.0.0.1:${HERMES_WEBUI_PORT}"; then
-      info "WebUI is ready: http://127.0.0.1:${HERMES_WEBUI_PORT}"
+    if curl -fsS -o /dev/null "${url}"; then
+      info "${name} is ready: ${url}"
       return 0
     fi
     sleep 5
   done
 
   compose ps
-  compose logs --tail=120 hermes-webui
-  die "WebUI did not become ready within ${timeout_seconds}s"
+  compose logs --tail=120 "${service}"
+  die "${name} did not become ready within ${timeout_seconds}s"
 }
 
 verify() {
@@ -355,17 +421,19 @@ verify() {
   compose exec -T hermes-agent /opt/hermes/.venv/bin/hermes plugins list
 
   info ""
-  info "Verifying WebUI package import:"
-  compose exec -T -u 0 hermes-webui /app/venv/bin/python3 -c "import hermes_wiki; assert callable(hermes_wiki.register)"
+  info "Verifying Open WebUI can reach Hermes Agent API:"
+  compose exec -T open-webui python3 -c "import urllib.request; urllib.request.urlopen('http://hermes-agent:8642/health', timeout=10).read()"
 
   info ""
-  info "Verifying local HTTP response:"
+  info "Verifying local HTTP responses:"
   curl -fsS -o /dev/null "http://127.0.0.1:${HERMES_WEBUI_PORT}"
-  info "HTTP OK: http://127.0.0.1:${HERMES_WEBUI_PORT}"
+  info "Hermes WebUI HTTP OK: http://127.0.0.1:${HERMES_WEBUI_PORT}"
+  curl -fsS -o /dev/null "http://127.0.0.1:${OPEN_WEBUI_PORT}"
+  info "Open WebUI HTTP OK: http://127.0.0.1:${OPEN_WEBUI_PORT}"
 }
 
 logs() {
-  compose logs --tail=100 hermes-agent-plugin-install hermes-webui-plugin-install hermes-agent hermes-webui
+  compose logs --tail=100 hermes-agent-src-init hermes-agent hermes-webui open-webui
 }
 
 run_auth() {
@@ -564,7 +632,7 @@ profiles_logs() {
 
 profiles_cleanup() {
   ids_output="$(profiles_metadata --print-profile-ids)"
-  services=(hermes-agent-src-init hermes-agent-plugin-install)
+  services=(hermes-agent-src-init)
 
   while IFS= read -r profile_id; do
     [ -n "${profile_id}" ] || continue
@@ -584,12 +652,11 @@ EOF
 }
 
 restart_services() {
-  compose restart hermes-agent hermes-webui
+  compose restart hermes-agent hermes-webui open-webui
 }
 
 update_plugins() {
-  compose up -d --force-recreate hermes-agent-plugin-install hermes-webui-plugin-install
-  compose restart hermes-agent hermes-webui
+  compose up -d --force-recreate hermes-agent hermes-webui open-webui
 }
 
 pull_images() {
@@ -599,6 +666,8 @@ pull_images() {
 
 bootstrap_local() {
   export HERMES_WEBUI_BIND_IP=127.0.0.1
+  export OPEN_WEBUI_BIND_IP=127.0.0.1
+  export OPEN_WEBUI_URL="http://127.0.0.1:${OPEN_WEBUI_PORT}"
   preflight
   init_storage
   up_local
@@ -608,6 +677,7 @@ bootstrap_local() {
 
 bootstrap_lan() {
   export HERMES_WEBUI_BIND_IP=0.0.0.0
+  export OPEN_WEBUI_BIND_IP=0.0.0.0
   preflight
   init_storage
   up_lan

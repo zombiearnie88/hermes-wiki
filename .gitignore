@@ -21,6 +21,10 @@ dist/
 
 # Local environment files
 .env
+examples/.env.vps
+examples/mac-mini/mac-mini.env
+examples/mac-mini/profiles.yaml
+examples/mac-mini/docker-compose.profiles.generated.yml
 
 # Local plugin/workspace state
 raw/

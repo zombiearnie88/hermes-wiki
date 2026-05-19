@@ -2,7 +2,7 @@
 
 This folder is a self-contained Mac mini deployment bundle. Zip this folder, copy it to another Mac, unzip it, and run `mac-mini.sh` from inside the folder.
 
-The bundle starts Hermes Agent, Hermes WebUI, and the `hermes-wiki` plugin with Docker Compose. Persistent user data is stored under `/Users/Shared/hermes` by default. Runtime internals stay in Docker named volumes.
+The single-stack bundle starts Hermes Agent, Hermes WebUI, and Open WebUI with Docker Compose. Persistent user data is stored under `/Users/Shared/hermes` by default. Runtime internals stay in Docker named volumes.
 
 ## Files
 
@@ -36,7 +36,11 @@ Unzip the bundle and enter the folder:
 ```bash
 cd mac-mini
 chmod +x mac-mini.sh
+cp mac-mini.env.example mac-mini.env
+vi mac-mini.env
 ```
+
+Replace `HERMES_API_SERVER_KEY` and `OPEN_WEBUI_SECRET_KEY` before the first single-stack deploy. Generate values with `openssl rand -hex 32`.
 
 Local-only deployment:
 
@@ -44,10 +48,11 @@ Local-only deployment:
 ./mac-mini.sh bootstrap-local
 ```
 
-Open WebUI on the Mac:
+Open the local single-stack frontends on the Mac:
 
 ```text
-http://127.0.0.1:8787
+Hermes WebUI: http://127.0.0.1:8787
+Open WebUI: http://127.0.0.1:3000
 ```
 
 LAN deployment:
@@ -56,32 +61,51 @@ LAN deployment:
 ./mac-mini.sh bootstrap-lan
 ```
 
-Open WebUI from another device on the LAN:
+Open the single-stack frontends from another device on the LAN:
 
 ```text
-http://<mac-lan-ip>:8787
+Hermes WebUI: http://<mac-lan-ip>:8787
+Open WebUI: http://<mac-lan-ip>:3000
 ```
 
-Do not expose the Mac mini WebUI directly to the public internet without a reverse proxy, TLS, and an access-control layer.
+LAN mode exposes Hermes WebUI and Open WebUI to the trusted LAN. It does not publish the Hermes Agent API separately.
 
-## Optional Env File
+Open WebUI uses first-user-admin signup by default in this local bundle. Keep the endpoint loopback-only unless the LAN is trusted.
 
-The script works without `mac-mini.env`. It auto-detects UID/GID from the current macOS user and uses these defaults:
+Do not expose the Mac mini WebUIs directly to the public internet without a reverse proxy, TLS, and an access-control layer.
+
+## Env File
+
+Create `mac-mini.env` from `mac-mini.env.example` before running the single-stack Open WebUI deployment. The example file contains these values and placeholders; replace the secret placeholders before bootstrapping:
 
 ```text
 HERMES_COMPOSE_PROJECT=hermes-mac-mini
 HERMES_PROFILES_COMPOSE_PROJECT=hermes-mac-mini-profiles
 HERMES_PROFILES_BASE_DIR=/Users/Shared/hermes/profiles
+HERMES_API_SERVER_KEY=replace-with-random-secret
 HERMES_WEBUI_BIND_IP=127.0.0.1
 HERMES_WEBUI_PORT=8787
 HERMES_HOME_DIR=/Users/Shared/hermes/home
 HERMES_WORKSPACE_DIR=/Users/Shared/hermes/workspace
 HERMES_WIKI_REPO=https://github.com/zombiearnie88/hermes-wiki.git
+OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:main-slim
+OPEN_WEBUI_BIND_IP=127.0.0.1
+OPEN_WEBUI_PORT=3000
+OPEN_WEBUI_URL=http://127.0.0.1:3000
+OPEN_WEBUI_NAME=RubikLab Chat
+OPEN_WEBUI_DATA_DIR=/Users/Shared/hermes/open-webui
+OPEN_WEBUI_SECRET_KEY=replace-with-random-secret
 ```
+
+Open WebUI stores users, chats, uploads, connection settings, and downloaded slim-image cache assets under `/Users/Shared/hermes/open-webui` by default. The slim image may download RAG, speech-to-text, tokenizer, or related assets on first use.
+
+`HERMES_WIKI_REPO` is used by the generated multi-profile stack, not by the single-stack `docker-compose.yml`.
 
 ## Multi-Profile Stack
 
 The bundle can also run multiple isolated Hermes profiles from a YAML config. Docker Compose cannot create services dynamically by itself, so `mac-mini.sh` generates `docker-compose.profiles.generated.yml` from `profiles.yaml`.
+
+The profile stack is unchanged by the single-stack Open WebUI service.
 
 Each profile gets its own Hermes Agent gateway container and WebUI container, while all profiles share the `hermes-agent-src` runtime volume. This follows the Hermes Docker recommendation to use one container per profile instead of built-in profiles inside one container.
 
@@ -146,7 +170,7 @@ profiles:
 
 If the Mac has `python3`, the script uses it to generate compose. Otherwise it falls back to the small `python:3.13-alpine` Docker image.
 
-Create an env file only when you need custom values:
+For profile-only deployments, create an env file only when you need custom values:
 
 ```bash
 cp mac-mini.env.example mac-mini.env
@@ -246,16 +270,16 @@ Run Hermes auth commands inside the Hermes Agent container:
 
 ## Updates
 
-Update to a different plugin source by editing `HERMES_WIKI_REPO` in `mac-mini.env`:
-
-```bash
-HERMES_WIKI_REPO=https://github.com/zombiearnie88/hermes-wiki.git
-```
-
-Then rerun installers and restart runtime services:
+Recreate single-stack runtime services after env or compose changes:
 
 ```bash
 ./mac-mini.sh update
+```
+
+For generated profile-stack plugin installs, change `HERMES_WIKI_REPO` in `mac-mini.env` before regenerating or bootstrapping profiles:
+
+```text
+HERMES_WIKI_REPO=https://github.com/zombiearnie88/hermes-wiki.git
 ```
 
 Pull newer base images and recreate containers:
@@ -272,7 +296,7 @@ Back up persistent production data:
 sudo tar -czf hermes-mac-mini-backup.tgz /Users/Shared/hermes
 ```
 
-If you set custom `HERMES_HOME_DIR` or `HERMES_WORKSPACE_DIR`, back up those directories instead.
+If you set custom `HERMES_HOME_DIR`, `HERMES_WORKSPACE_DIR`, or `OPEN_WEBUI_DATA_DIR`, back up those directories instead.
 
 ## Stop Or Remove
 
@@ -294,7 +318,7 @@ Remove host data only when you intentionally want to delete Hermes configuration
 
 ## Troubleshooting
 
-If `8787` is already in use, change `HERMES_WEBUI_PORT` in `mac-mini.env`, then redeploy:
+If `8787` or `3000` is already in use, change `HERMES_WEBUI_PORT` or `OPEN_WEBUI_PORT` in `mac-mini.env`, then redeploy:
 
 ```bash
 ./mac-mini.sh up-local
@@ -306,7 +330,7 @@ If bind-mounted files are owned by the wrong user, confirm UID/GID and rerun:
 ./mac-mini.sh init-storage
 ```
 
-If a plugin install service failed, inspect logs and rerun installers:
+If a runtime service fails, inspect logs and recreate services:
 
 ```bash
 ./mac-mini.sh logs

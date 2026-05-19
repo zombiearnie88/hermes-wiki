@@ -4,6 +4,8 @@ This checklist is tailored for the current production VPS deployment:
 
 - `ai.rubiklab.vip` -> Hermes WebUI
 - `panel.rubiklab.vip` -> Hermes Agent dashboard, protected by Traefik BasicAuth
+- `chat.rubiklab.vip` -> Open WebUI
+- `openai.rubiklab.vip` -> Hermes Agent OpenAI-compatible API, protected by bearer token
 - Docker context: `hermes-agent`
 - VPS host: `opc@161.118.197.15`
 - SSH key: `~/dev/machine-learning/.ssh/kgraph-ai-2.key`
@@ -18,9 +20,12 @@ This checklist is tailored for the current production VPS deployment:
 
 - [ ] Copy `examples/env.vps.example` to `examples/.env.vps`
 - [ ] Update `ACME_EMAIL` in `examples/.env.vps`
+- [ ] Replace `HERMES_API_SERVER_KEY` in `examples/.env.vps`
 - [ ] Replace `HERMES_WEBUI_PASSWORD` in `examples/.env.vps`
 - [ ] Confirm `HERMES_DASHBOARD_BASIC_AUTH` is set in `examples/.env.vps`
-- [ ] Confirm DNS points both hostnames to `161.118.197.15`
+- [ ] Replace `OPEN_WEBUI_SECRET_KEY` and `OPEN_WEBUI_ADMIN_PASSWORD` in `examples/.env.vps`
+- [ ] Confirm `OPEN_WEBUI_ADMIN_EMAIL` is correct in `examples/.env.vps`
+- [ ] Confirm DNS points all four hostnames to `161.118.197.15`
 - [ ] Confirm OCI ingress and host firewall allow `80/tcp` and `443/tcp`
 - [ ] Confirm Docker context `hermes-agent` is reachable
 
@@ -47,7 +52,7 @@ docker context create hermes-agent \
 
 ## Generate Secrets
 
-Generate a new Hermes API key if you do not want to use the example value:
+Generate a new Hermes API key, Open WebUI secret key, and Open WebUI admin password:
 
 ```bash
 openssl rand -hex 32
@@ -66,13 +71,17 @@ When storing an APR1 hash in `examples/.env.vps`, double each dollar sign as `$$
 
 - [ ] Check `ai.rubiklab.vip`
 - [ ] Check `panel.rubiklab.vip`
+- [ ] Check `chat.rubiklab.vip`
+- [ ] Check `openai.rubiklab.vip`
 
 ```bash
 dig +short ai.rubiklab.vip
 dig +short panel.rubiklab.vip
+dig +short chat.rubiklab.vip
+dig +short openai.rubiklab.vip
 ```
 
-Expected result: both resolve to `161.118.197.15`.
+Expected result: all four resolve to `161.118.197.15`.
 
 ## Verify Remote Access
 
@@ -93,18 +102,20 @@ Expected result:
 
 ## Create Host Directories
 
-- [ ] Create Hermes data directories on the VPS
+- [ ] Create Hermes and Open WebUI data directories on the VPS
 - [ ] Ensure ownership is `1000:1000`
 
 ```bash
-ssh hermes-agent-vps 'sudo mkdir -p /srv/hermes/home /srv/hermes/workspace'
+ssh hermes-agent-vps 'sudo mkdir -p /srv/hermes/home /srv/hermes/workspace /srv/hermes/open-webui'
 ssh hermes-agent-vps 'sudo chown -R 1000:1000 /srv/hermes'
 ```
+
+Open WebUI stores users, chats, uploads, connection settings, and slim-image cache assets in `/srv/hermes/open-webui`; include it in production backups.
 
 ## Validate Compose Locally Before Deploy
 
 - [ ] Validate compose rendering with `examples/.env.vps`
-- [ ] Confirm only `traefik`, `hermes-agent`, and `hermes-webui` are present
+- [ ] Confirm only `traefik`, `hermes-agent`, `hermes-webui`, and `open-webui` are present
 
 ```bash
 docker compose -p hermes-production -f examples/docker-compose.production-vps.yml --env-file examples/.env.vps config
@@ -116,6 +127,7 @@ Expected services:
 ```text
 hermes-agent
 hermes-webui
+open-webui
 traefik
 ```
 
@@ -135,29 +147,52 @@ docker --context hermes-agent compose -p hermes-production -f examples/docker-co
 - [ ] Check Traefik logs
 - [ ] Check Hermes Agent logs
 - [ ] Check Hermes WebUI logs
+- [ ] Check Open WebUI logs
 
 ```bash
 docker --context hermes-agent compose -p hermes-production -f examples/docker-compose.production-vps.yml --env-file examples/.env.vps ps
 docker --context hermes-agent compose -p hermes-production -f examples/docker-compose.production-vps.yml --env-file examples/.env.vps logs -f traefik
 docker --context hermes-agent compose -p hermes-production -f examples/docker-compose.production-vps.yml --env-file examples/.env.vps logs -f hermes-agent
 docker --context hermes-agent compose -p hermes-production -f examples/docker-compose.production-vps.yml --env-file examples/.env.vps logs -f hermes-webui
+docker --context hermes-agent compose -p hermes-production -f examples/docker-compose.production-vps.yml --env-file examples/.env.vps logs -f open-webui
 ```
 
 ## Validate Public Endpoints
 
 - [ ] Check WebUI public URL
 - [ ] Check dashboard public URL requires BasicAuth
+- [ ] Check Open WebUI public URL
+- [ ] Check OpenAI-compatible API public URL
 
 ```bash
 curl -I https://ai.rubiklab.vip
 curl -I https://panel.rubiklab.vip
 curl -I -u 'admin:<dashboard-password>' https://panel.rubiklab.vip
+curl -I https://chat.rubiklab.vip
+curl -fsS https://openai.rubiklab.vip/health
+curl -fsS -H 'Authorization: Bearer <HERMES_API_SERVER_KEY>' https://openai.rubiklab.vip/v1/models
 ```
 
 Then open in browser:
 
 - `https://ai.rubiklab.vip`
 - `https://panel.rubiklab.vip`
+- `https://chat.rubiklab.vip`
+
+ONLYOFFICE Desktop OpenAI-compatible settings:
+
+- Base URL: `https://openai.rubiklab.vip/v1`
+- API key: `HERMES_API_SERVER_KEY`
+- Model: `hermes-agent`
+
+Open WebUI functional checks:
+
+- [ ] Login with `OPEN_WEBUI_ADMIN_EMAIL` and `OPEN_WEBUI_ADMIN_PASSWORD`
+- [ ] Confirm the model picker shows `hermes-agent`
+- [ ] Send a simple prompt
+- [ ] Send a harmless tool-call prompt and confirm streaming/progress behavior
+
+Open WebUI uses `ghcr.io/open-webui/open-webui:main-slim` by default. First use of RAG, speech-to-text, tokenizer, or related features may download cache assets into `/srv/hermes/open-webui`.
 
 ## Install Hermes Wiki Plugin
 
@@ -207,9 +242,14 @@ docker --context hermes-agent compose -p hermes-production -f examples/docker-co
 - [ ] `examples/.env.vps` has a strong `HERMES_API_SERVER_KEY`
 - [ ] `examples/.env.vps` has a strong `HERMES_WEBUI_PASSWORD`
 - [ ] `examples/.env.vps` has `HERMES_DASHBOARD_BASIC_AUTH`
-- [ ] DNS resolves both domains to `161.118.197.15`
+- [ ] `examples/.env.vps` has a strong `OPEN_WEBUI_SECRET_KEY`
+- [ ] `examples/.env.vps` has `OPEN_WEBUI_ADMIN_EMAIL` and a strong `OPEN_WEBUI_ADMIN_PASSWORD`
+- [ ] DNS resolves all four domains to `161.118.197.15`
 - [ ] `/srv/hermes/home` exists and is owned by `1000:1000`
 - [ ] `/srv/hermes/workspace` exists and is owned by `1000:1000`
+- [ ] `/srv/hermes/open-webui` exists and is owned by `1000:1000`
 - [ ] `docker --context hermes-agent compose ... ps` shows all services up
 - [ ] `https://ai.rubiklab.vip` loads
 - [ ] `https://panel.rubiklab.vip` prompts for BasicAuth and loads after login
+- [ ] `https://chat.rubiklab.vip` loads and shows the `hermes-agent` model
+- [ ] `https://openai.rubiklab.vip/v1/models` returns models with `Authorization: Bearer HERMES_API_SERVER_KEY`

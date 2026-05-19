@@ -1,67 +1,50 @@
-# Production VPS example for hermes-wiki.
+# Production VPS stack for Hermes Agent and Hermes WebUI.
+#
+# Public entrypoints:
+# - https://ai.rubiklab.vip -> hermes-webui:8787
+# - https://panel.rubiklab.vip -> hermes-agent dashboard:9119
+# - https://chat.rubiklab.vip -> open-webui:8080
+# - https://openai.rubiklab.vip -> hermes-agent OpenAI-compatible API:8642
 #
 # Persistent user data is bind-mounted from the VPS filesystem:
-# - ${HERMES_HOME_DIR} keeps Hermes config, auth, sessions, logs, and plugin enablement.
-# - ${HERMES_WORKSPACE_DIR} keeps wiki workspaces and source documents.
+# - ${HERMES_HOME_DIR} keeps Hermes config, auth, sessions, logs, and plugins.
+# - ${HERMES_WORKSPACE_DIR} keeps workspaces and source documents.
+# - ${OPEN_WEBUI_DATA_DIR} keeps Open WebUI users, chats, uploads, and cache assets.
 #
-# Runtime internals stay in Docker named volumes:
-# - hermes-agent-src stores the Hermes Agent runtime from the image.
-# - hermes-webui-venv stores the WebUI Python environment with hermes-wiki installed.
-# - caddy-data and caddy-config store TLS certificates and Caddy runtime state.
-#
-# Required production setup on the VPS:
-#   sudo mkdir -p /srv/hermes/home /srv/hermes/workspace
-#   sudo chown -R 1000:1000 /srv/hermes
-#   export HERMES_DOMAIN=hermes.example.com
-#
-# Recommended release pin:
-#   export HERMES_WIKI_PACKAGE='git+https://github.com/zombiearnie88/hermes-wiki.git@v0.1.0'
+# This stack intentionally does not install hermes-wiki. Install and manage
+# plugins from the Hermes Agent dashboard after deployment.
 
 services:
-  hermes-agent-src-init:
-    image: nousresearch/hermes-agent:latest
-    restart: "no"
-    command: version
-    volumes:
-      - hermes-agent-src:/opt/hermes
-    networks:
-      - hermes-private
-
-  hermes-agent-plugin-install:
-    image: nousresearch/hermes-agent:latest
-    restart: "no"
-    depends_on:
-      hermes-agent-src-init:
-        condition: service_completed_successfully
+  traefik:
+    image: ${TRAEFIK_IMAGE:-traefik:v3.1}
+    restart: unless-stopped
     command:
-      - sh
-      - -lc
-      - |
-        uv pip install --python /opt/hermes/.venv/bin/python "$${HERMES_WIKI_PACKAGE}"
-        /opt/hermes/.venv/bin/hermes plugins enable hermes-wiki
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?Set ACME_EMAIL to the Let's Encrypt contact email}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
     volumes:
-      - hermes-agent-src:/opt/hermes
-      - ${HERMES_HOME_DIR:-/srv/hermes/home}:/opt/data/profiles/default
-      - ${HERMES_WORKSPACE_DIR:-/srv/hermes/workspace}:/workspace
-    environment:
-      HERMES_HOME: /opt/data/profiles/default
-      HERMES_UID: ${HERMES_UID:-1000}
-      HERMES_GID: ${HERMES_GID:-1000}
-      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-git+https://github.com/zombiearnie88/hermes-wiki.git}
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
     networks:
-      - hermes-private
+      - edge
 
   hermes-agent:
-    image: nousresearch/hermes-agent:latest
+    image: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
     restart: unless-stopped
-    depends_on:
-      hermes-agent-plugin-install:
-        condition: service_completed_successfully
     command:
-      - sh
-      - -lc
-      - exec sleep infinity
+      - gateway
+      - run
     shm_size: ${HERMES_SHM_SIZE:-1g}
+    working_dir: /workspace
     volumes:
       - hermes-agent-src:/opt/hermes
       - ${HERMES_HOME_DIR:-/srv/hermes/home}:/opt/data/profiles/default
@@ -70,88 +53,138 @@ services:
       HERMES_HOME: /opt/data/profiles/default
       HERMES_UID: ${HERMES_UID:-1000}
       HERMES_GID: ${HERMES_GID:-1000}
+      MESSAGING_CWD: /workspace
+      TERMINAL_CWD: /workspace
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: "8642"
+      API_SERVER_MODEL_NAME: hermes-agent
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:?Set HERMES_API_SERVER_KEY to a random secret}
+      API_SERVER_CORS_ORIGINS: "*"
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: 0.0.0.0
+      HERMES_DASHBOARD_PORT: "9119"
+      HERMES_DASHBOARD_TUI: "1"
+    expose:
+      - "8642"
+      - "9119"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=hermes-production-edge"
+      - "traefik.http.routers.hermes-dashboard.rule=Host(`panel.rubiklab.vip`)"
+      - "traefik.http.routers.hermes-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.hermes-dashboard.middlewares=hermes-dashboard-auth"
+      - "traefik.http.routers.hermes-dashboard.tls=true"
+      - "traefik.http.routers.hermes-dashboard.tls.certresolver=le"
+      - "traefik.http.middlewares.hermes-dashboard-auth.basicauth.users=${HERMES_DASHBOARD_BASIC_AUTH:?Set HERMES_DASHBOARD_BASIC_AUTH to user:hashed-password}"
+      - "traefik.http.routers.hermes-dashboard.service=hermes-dashboard"
+      - "traefik.http.services.hermes-dashboard.loadbalancer.server.port=9119"
+      - "traefik.http.routers.hermes-api.rule=Host(`openai.rubiklab.vip`)"
+      - "traefik.http.routers.hermes-api.entrypoints=websecure"
+      - "traefik.http.routers.hermes-api.middlewares=hermes-api-ratelimit"
+      - "traefik.http.routers.hermes-api.tls=true"
+      - "traefik.http.routers.hermes-api.tls.certresolver=le"
+      - "traefik.http.routers.hermes-api.service=hermes-api"
+      - "traefik.http.services.hermes-api.loadbalancer.server.port=8642"
+      - "traefik.http.middlewares.hermes-api-ratelimit.ratelimit.average=120"
+      - "traefik.http.middlewares.hermes-api-ratelimit.ratelimit.burst=240"
     networks:
-      - hermes-private
-
-  hermes-webui-plugin-install:
-    image: ghcr.io/nesquena/hermes-webui:latest
-    restart: "no"
-    user: "0"
-    command:
-      - sh
-      - -lc
-      - |
-        if [ ! -x /app/venv/bin/python3 ]; then
-          uv venv /app/venv
-        fi
-        uv pip install --python /app/venv/bin/python3 "$${HERMES_WIKI_PACKAGE}"
-        chmod -R a+rX /app/venv
-    volumes:
-      - hermes-webui-venv:/app/venv
-    environment:
-      HERMES_WIKI_PACKAGE: ${HERMES_WIKI_PACKAGE:-git+https://github.com/zombiearnie88/hermes-wiki.git}
-    networks:
-      - hermes-private
+      - edge
+      - internal
 
   hermes-webui:
-    image: ghcr.io/nesquena/hermes-webui:latest
+    image: ${HERMES_WEBUI_IMAGE:-ghcr.io/nesquena/hermes-webui:latest}
     restart: unless-stopped
     depends_on:
-      hermes-agent-src-init:
-        condition: service_completed_successfully
       hermes-agent:
         condition: service_started
-      hermes-webui-plugin-install:
-        condition: service_completed_successfully
-    expose:
-      - "8787"
+    command:
+      - bash
+      - -lc
+      - |
+        mkdir -p /app/venv
+        chown -R "$${WANTED_UID:-1000}:$${WANTED_GID:-1000}" /app/venv
+        until [ -f /home/hermeswebui/.hermes/hermes-agent/pyproject.toml ]; do
+          echo "Waiting for Hermes Agent source volume..."
+          sleep 2
+        done
+        exec /hermeswebui_init.bash
     shm_size: ${HERMES_SHM_SIZE:-1g}
+    working_dir: /workspace
     volumes:
       - ${HERMES_HOME_DIR:-/srv/hermes/home}:/home/hermeswebui/.hermes
+      - ${HERMES_WORKSPACE_DIR:-/srv/hermes/workspace}:/workspace
       - hermes-agent-src:/home/hermeswebui/.hermes/hermes-agent
       - hermes-webui-venv:/app/venv
-      - ${HERMES_WORKSPACE_DIR:-/srv/hermes/workspace}:/workspace
     environment:
       HERMES_HOME: /home/hermeswebui/.hermes
       HERMES_CONFIG_PATH: /home/hermeswebui/.hermes/config.yaml
       HERMES_WEBUI_HOST: 0.0.0.0
       HERMES_WEBUI_PORT: "8787"
+      HERMES_WEBUI_PASSWORD: ${HERMES_WEBUI_PASSWORD:?Set HERMES_WEBUI_PASSWORD to a random secret}
       HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui_state
       HERMES_WEBUI_DEFAULT_WORKSPACE: /workspace
       HERMES_SKIP_CHMOD: ${HERMES_SKIP_CHMOD:-1}
       WANTED_UID: ${HERMES_UID:-1000}
       WANTED_GID: ${HERMES_GID:-1000}
+    expose:
+      - "8787"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=hermes-production-edge"
+      - "traefik.http.routers.hermes-webui.rule=Host(`ai.rubiklab.vip`)"
+      - "traefik.http.routers.hermes-webui.entrypoints=websecure"
+      - "traefik.http.routers.hermes-webui.tls=true"
+      - "traefik.http.routers.hermes-webui.tls.certresolver=le"
+      - "traefik.http.services.hermes-webui.loadbalancer.server.port=8787"
     networks:
-      - hermes-private
+      - edge
+      - internal
 
-  caddy:
-    image: caddy:2
+  open-webui:
+    image: ${OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:main-slim}
     restart: unless-stopped
     depends_on:
-      hermes-webui:
+      hermes-agent:
         condition: service_started
-    command:
-      - caddy
-      - reverse-proxy
-      - --from
-      - ${HERMES_DOMAIN:?Set HERMES_DOMAIN to your public HTTPS domain, for example hermes.example.com}
-      - --to
-      - hermes-webui:8787
-    ports:
-      - "80:80"
-      - "443:443"
     volumes:
-      - caddy-data:/data
-      - caddy-config:/config
+      - ${OPEN_WEBUI_DATA_DIR:-/srv/hermes/open-webui}:/app/backend/data
+    environment:
+      WEBUI_URL: https://chat.rubiklab.vip
+      WEBUI_NAME: RubikLab Chat
+      WEBUI_SECRET_KEY: ${OPEN_WEBUI_SECRET_KEY:?Set OPEN_WEBUI_SECRET_KEY to a random secret}
+      WEBUI_ADMIN_EMAIL: ${OPEN_WEBUI_ADMIN_EMAIL:?Set OPEN_WEBUI_ADMIN_EMAIL}
+      WEBUI_ADMIN_PASSWORD: ${OPEN_WEBUI_ADMIN_PASSWORD:?Set OPEN_WEBUI_ADMIN_PASSWORD}
+      ENABLE_SIGNUP: "false"
+      ENABLE_OLLAMA_API: "false"
+      OPENAI_API_BASE_URL: http://hermes-agent:8642/v1
+      OPENAI_API_KEY: ${HERMES_API_SERVER_KEY:?Set HERMES_API_SERVER_KEY to a random secret}
+    expose:
+      - "8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=hermes-production-edge"
+      - "traefik.http.routers.open-webui.rule=Host(`chat.rubiklab.vip`)"
+      - "traefik.http.routers.open-webui.entrypoints=websecure"
+      - "traefik.http.routers.open-webui.tls=true"
+      - "traefik.http.routers.open-webui.tls.certresolver=le"
+      - "traefik.http.services.open-webui.loadbalancer.server.port=8080"
     networks:
-      - hermes-private
+      - edge
+      - internal
 
 networks:
-  hermes-private:
+  edge:
+    name: hermes-production-edge
+    driver: bridge
+  internal:
+    name: hermes-production-internal
     driver: bridge
 
 volumes:
   hermes-agent-src:
+    name: ${HERMES_AGENT_SRC_VOLUME_NAME:-hermes-agent-src}
   hermes-webui-venv:
-  caddy-data:
-  caddy-config:
+    name: ${HERMES_WEBUI_VENV_VOLUME_NAME:-hermes-webui-venv}
+  traefik-letsencrypt:
+    name: ${TRAEFIK_LETSENCRYPT_VOLUME_NAME:-traefik-letsencrypt}
