@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .config import load_config
-from .pageindex.builder import build_or_load_pageindex
+from .pageindex.builder import build_or_load_pageindex_async
 from .pageindex.tree import render_tree
-from .runtime import GenerationResult, HermesRuntimeError, generate_conversation, generate_text
+from .runtime import GenerationResult, HermesRuntimeError, agenerate_conversation
 from .schema import get_schema_md
 from .workspace import WorkspacePaths
 
@@ -138,26 +139,24 @@ class ConceptGenerationResult:
     content: str
 
 
-def _generate_text(model: str, provider: str | None, system_prompt: str, user_prompt: str) -> str:
-    return generate_text(model, provider, system_prompt, user_prompt)
-
-
-def _generate_conversation(
+async def _agenerate_conversation(
+    llm: Any,
     model: str,
     provider: str | None,
     user_message: str,
     *,
     system_message: str | None = None,
     conversation_history: list[dict] | None = None,
-    task_id: str | None = None,
+    purpose: str | None = None,
 ) -> GenerationResult:
-    return generate_conversation(
+    return await agenerate_conversation(
+        llm,
         model,
         provider,
         user_message,
         system_message=system_message,
         conversation_history=conversation_history,
-        task_id=task_id,
+        purpose=purpose,
     )
 
 
@@ -394,7 +393,8 @@ def _parse_concept_page_response(raw: str) -> tuple[str, str]:
     return "", raw
 
 
-def _generate_concept_task(
+async def _agenerate_concept_task(
+    llm: Any,
     task: ConceptGenerationTask,
     *,
     doc_name: str,
@@ -402,18 +402,20 @@ def _generate_concept_task(
     provider: str | None,
     base_history: list[dict],
 ) -> ConceptGenerationResult:
-    result = _generate_conversation(
+    result = await _agenerate_conversation(
+        llm,
         model,
         provider,
         task.user_message,
         conversation_history=base_history,
-        task_id=f"wiki:{doc_name}:concept:{task.action}:{task.safe_name}",
+        purpose=f"wiki.concepts.{task.action}.{doc_name}.{task.safe_name}",
     )
     brief, page_content = _parse_concept_page_response(result.final_response)
     return ConceptGenerationResult(task=task, brief=brief, content=page_content)
 
 
-def _generate_concept_tasks(
+async def _agenerate_concept_tasks(
+    llm: Any,
     tasks: list[ConceptGenerationTask],
     *,
     doc_name: str,
@@ -425,43 +427,31 @@ def _generate_concept_tasks(
     if not tasks:
         return []
 
-    max_workers = max(1, min(max_concurrency, len(tasks)))
+    max_concurrency = max(1, min(max_concurrency, len(tasks)))
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def run_task(task: ConceptGenerationTask) -> ConceptGenerationResult:
+        async with semaphore:
+            return await _agenerate_concept_task(
+                llm,
+                task,
+                doc_name=doc_name,
+                model=model,
+                provider=provider,
+                base_history=base_history,
+            )
+
+    gathered = await asyncio.gather(
+        *(run_task(task) for task in tasks),
+        return_exceptions=True,
+    )
     results: list[ConceptGenerationResult] = []
     errors: list[Exception] = []
-
-    if max_workers == 1:
-        for task in tasks:
-            try:
-                results.append(
-                    _generate_concept_task(
-                        task,
-                        doc_name=doc_name,
-                        model=model,
-                        provider=provider,
-                        base_history=base_history,
-                    )
-                )
-            except Exception as exc:
-                errors.append(exc)
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(
-                    _generate_concept_task,
-                    task,
-                    doc_name=doc_name,
-                    model=model,
-                    provider=provider,
-                    base_history=base_history,
-                )
-                for task in tasks
-            ]
-            for future in futures:
-                try:
-                    results.append(future.result())
-                except Exception as exc:
-                    errors.append(exc)
-                    continue
+    for item in gathered:
+        if isinstance(item, Exception):
+            errors.append(item)
+        else:
+            results.append(item)
 
     if not results and errors and len(errors) == len(tasks):
         first = errors[0]
@@ -619,7 +609,8 @@ def _update_index(
     index_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _compile_concepts_from_summary(
+async def _compile_concepts_from_summary_async(
+    llm: Any,
     doc_name: str,
     paths: WorkspacePaths,
     model: str,
@@ -640,7 +631,8 @@ def _compile_concepts_from_summary(
     ]
 
     concept_briefs_text = _read_concept_briefs(wiki_dir)
-    plan_result = _generate_conversation(
+    plan_result = await _agenerate_conversation(
+        llm,
         model,
         provider,
         _CONCEPTS_PLAN_USER.format(
@@ -648,6 +640,7 @@ def _compile_concepts_from_summary(
             concept_briefs=concept_briefs_text,
         ),
         conversation_history=base_history,
+        purpose=f"wiki.concepts.plan.{doc_name}",
     )
     plan_raw = plan_result.final_response
     try:
@@ -679,7 +672,8 @@ def _compile_concepts_from_summary(
     updated_count = 0
 
     concept_tasks = _prepare_concept_generation_tasks(wiki_dir, doc_name, create_items, update_items)
-    concept_results = _generate_concept_tasks(
+    concept_results = await _agenerate_concept_tasks(
+        llm,
         concept_tasks,
         doc_name=doc_name,
         model=model,
@@ -725,7 +719,8 @@ def _compile_concepts_from_summary(
     )
 
 
-def compile_short_doc(
+async def compile_short_doc_async(
+    llm: Any,
     doc_name: str,
     source_path: Path,
     paths: WorkspacePaths,
@@ -742,11 +737,13 @@ def compile_short_doc(
     system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
 
     summary_user = _SUMMARY_USER.format(doc_name=doc_name, content=content)
-    summary_result = _generate_conversation(
+    summary_result = await _agenerate_conversation(
+        llm,
         model,
         provider,
         summary_user,
         system_message=system_prompt,
+        purpose=f"wiki.summary.{doc_name}",
     )
     summary_raw = summary_result.final_response
     try:
@@ -761,7 +758,8 @@ def compile_short_doc(
         doc_brief = ""
         summary = summary_raw
     _write_summary(wiki_dir, doc_name, summary)
-    return _compile_concepts_from_summary(
+    return await _compile_concepts_from_summary_async(
+        llm,
         doc_name,
         paths,
         model,
@@ -772,6 +770,22 @@ def compile_short_doc(
         doc_brief=doc_brief,
         doc_type="short",
         concept_generation_concurrency=int(config.get("concept_generation_concurrency", 1)),
+    )
+
+
+def compile_short_doc(
+    doc_name: str,
+    source_path: Path,
+    paths: WorkspacePaths,
+    model: str,
+    provider: str | None,
+    *,
+    language_override: str | None = None,
+) -> CompileResult:
+    del doc_name, source_path, paths, model, provider, language_override
+    raise HermesRuntimeError(
+        "compile_short_doc requires Hermes plugin LLM access. Use compile_short_doc_async(..., llm=ctx.llm) "
+        "from plugin runtime instead."
     )
 
 
@@ -801,7 +815,8 @@ def _render_pageindex_summary(doc_name: str, page_count: int, description: str, 
     )
 
 
-def compile_pageindex_doc(
+async def compile_pageindex_doc_async(
+    llm: Any,
     doc_name: str,
     raw_path: Path,
     paths: WorkspacePaths,
@@ -816,7 +831,7 @@ def compile_pageindex_doc(
     schema_md = get_schema_md(wiki_dir)
     system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
 
-    pageindex = build_or_load_pageindex(doc_name, raw_path, paths, model, provider, language=language)
+    pageindex = await build_or_load_pageindex_async(llm, doc_name, raw_path, paths, model, provider, language=language)
     summary = _render_pageindex_summary(
         doc_name,
         pageindex.page_count,
@@ -837,7 +852,8 @@ def compile_pageindex_doc(
         page_count=pageindex.page_count,
         summary=summary,
     )
-    return _compile_concepts_from_summary(
+    return await _compile_concepts_from_summary_async(
+        llm,
         doc_name,
         paths,
         model,
@@ -848,4 +864,20 @@ def compile_pageindex_doc(
         doc_brief=doc_brief,
         doc_type="pageindex",
         concept_generation_concurrency=int(config.get("concept_generation_concurrency", 1)),
+    )
+
+
+def compile_pageindex_doc(
+    doc_name: str,
+    raw_path: Path,
+    paths: WorkspacePaths,
+    model: str,
+    provider: str | None,
+    *,
+    language_override: str | None = None,
+) -> CompileResult:
+    del doc_name, raw_path, paths, model, provider, language_override
+    raise HermesRuntimeError(
+        "compile_pageindex_doc requires Hermes plugin LLM access. Use compile_pageindex_doc_async(..., llm=ctx.llm) "
+        "from plugin runtime instead."
     )

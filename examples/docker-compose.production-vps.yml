@@ -38,7 +38,7 @@ services:
       - edge
 
   hermes-agent:
-    image: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:latest}
+    image: ${HERMES_AGENT_IMAGE:-nousresearch/hermes-agent:main}
     restart: unless-stopped
     command:
       - gateway

@@ -7,7 +7,7 @@ from ..images import load_pymupdf
 from ..workspace import WorkspacePaths
 
 from .config import PageIndexConfig, load_pageindex_config
-from .prompts import document_description_prompt, node_summary_prompt, pageindex_generate_text
+from .prompts import document_description_prompt, node_summary_prompt, pageindex_generate_text_async
 from .store import read_pageindex, write_pageindex
 from .tree import (
     build_chunk_tree,
@@ -54,7 +54,8 @@ def _build_initial_structure(pages: list[PageRecord], toc: list[list[Any]], conf
     return build_chunk_tree(page_count, max_pages_per_node=config.max_pages_per_node), "page_chunks"
 
 
-def _summary_for_node(
+async def _summary_for_node_async(
+    llm: Any,
     node: dict,
     pages: list[PageRecord],
     model: str,
@@ -74,14 +75,17 @@ def _summary_for_node(
 
     max_chars = max(2000, config.max_tokens_per_node * 4)
     prompt_text = text[:max_chars]
-    return pageindex_generate_text(
+    return await pageindex_generate_text_async(
+        llm,
         model,
         provider,
         node_summary_prompt(str(node.get("title", "Untitled")), start, end, prompt_text, language),
+        purpose=f"wiki.pageindex.node.{node.get('node_id', start)}",
     )
 
 
-def build_pageindex(
+async def build_pageindex_async(
+    llm: Any,
     doc_name: str,
     raw_path: Path,
     paths: WorkspacePaths,
@@ -100,13 +104,15 @@ def build_pageindex(
 
     structure, structure_source = _build_initial_structure(pages, toc, config)
     for node in flatten_nodes(structure):
-        node["summary"] = _summary_for_node(node, pages, model, provider, language, config)
+        node["summary"] = await _summary_for_node_async(llm, node, pages, model, provider, language, config)
 
     rendered_tree = render_tree(structure)
-    doc_description = pageindex_generate_text(
+    doc_description = await pageindex_generate_text_async(
+        llm,
         model,
         provider,
         document_description_prompt(doc_name, rendered_tree, language),
+        purpose=f"wiki.pageindex.description.{doc_name}",
     )
     audit = {
         "status": "completed",
@@ -128,7 +134,8 @@ def build_pageindex(
     )
 
 
-def build_or_load_pageindex(
+async def build_or_load_pageindex_async(
+    llm: Any,
     doc_name: str,
     raw_path: Path,
     paths: WorkspacePaths,
@@ -140,7 +147,7 @@ def build_or_load_pageindex(
     try:
         document = read_pageindex(paths, doc_name)
     except FileNotFoundError:
-        result = build_pageindex(doc_name, raw_path, paths, model, provider, language=language)
+        result = await build_pageindex_async(llm, doc_name, raw_path, paths, model, provider, language=language)
         write_pageindex(paths, result)
         return result
 

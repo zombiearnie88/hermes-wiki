@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from hermes_wiki import commands
@@ -10,7 +11,7 @@ from hermes_wiki.deps import DependencyInstallResult
 from hermes_wiki.deps import DependencyStatus
 
 
-def _stub_compile(doc_name, source_path, paths, model, provider=None, *, language_override=None):
+async def _stub_compile(llm, doc_name, source_path, paths, model, provider=None, *, language_override=None):
     summary_path = paths.wiki_dir / "summaries" / f"{doc_name}.md"
     summary_path.write_text(
         "---\ndoc_type: short\nfull_text: sources/{0}.md\n---\n\n# Summary\n".format(doc_name),
@@ -20,7 +21,7 @@ def _stub_compile(doc_name, source_path, paths, model, provider=None, *, languag
 
 
 def _allow_add_requirements(monkeypatch) -> None:
-    monkeypatch.setattr(commands, "_check_add_requirements", lambda files: None)
+    monkeypatch.setattr(commands, "_check_add_requirements", lambda files, **kwargs: None)
 
 
 def test_run_init_and_status_round_trip(tmp_path: Path) -> None:
@@ -78,11 +79,11 @@ def test_run_add_accepts_nested_workspace_override(tmp_path: Path, monkeypatch) 
     source = tmp_path / "note.md"
     source.write_text("# Note\n\nHello world.\n", encoding="utf-8")
     commands._run_init(str(workspace), "test/model", "en", 20)
-    monkeypatch.setattr(commands, "compile_short_doc", _stub_compile)
+    monkeypatch.setattr(commands, "compile_short_doc_async", _stub_compile)
     _allow_add_requirements(monkeypatch)
 
     nested_override = workspace / "wiki" / "concepts"
-    output = commands._run_add(str(source), str(nested_override))
+    output = asyncio.run(commands._run_add_async(str(source), str(nested_override), llm="fake-llm"))
     status_output = commands._run_status(str(workspace))
 
     assert "OK note.md" in output
@@ -103,10 +104,10 @@ def test_run_add_renames_duplicate_basenames(tmp_path: Path, monkeypatch) -> Non
     (second_dir / "dup.md").write_text("# Second\n", encoding="utf-8")
 
     commands._run_init(str(workspace), "test/model", "en", 20)
-    monkeypatch.setattr(commands, "compile_short_doc", _stub_compile)
+    monkeypatch.setattr(commands, "compile_short_doc_async", _stub_compile)
     _allow_add_requirements(monkeypatch)
 
-    output = commands._run_add(str(input_dir), str(workspace))
+    output = asyncio.run(commands._run_add_async(str(input_dir), str(workspace), llm="fake-llm"))
 
     assert "OK dup.md" in output
     assert "as dup-2" in output
@@ -126,14 +127,14 @@ def test_run_add_continues_after_single_file_failure(tmp_path: Path, monkeypatch
     commands._run_init(str(workspace), "test/model", "en", 20)
     _allow_add_requirements(monkeypatch)
 
-    def stub_compile(doc_name, source_path, paths, model, provider, *, language_override=None):
+    async def stub_compile(llm, doc_name, source_path, paths, model, provider, *, language_override=None):
         if doc_name == "bad":
             raise RuntimeError("simulated compile failure")
-        return _stub_compile(doc_name, source_path, paths, model, provider, language_override=language_override)
+        return await _stub_compile(llm, doc_name, source_path, paths, model, provider, language_override=language_override)
 
-    monkeypatch.setattr(commands, "compile_short_doc", stub_compile)
+    monkeypatch.setattr(commands, "compile_short_doc_async", stub_compile)
 
-    output = commands._run_add(str(input_dir), str(workspace))
+    output = asyncio.run(commands._run_add_async(str(input_dir), str(workspace), llm="fake-llm"))
     status_output = commands._run_status(str(workspace))
 
     assert "OK ok.md" in output
@@ -151,16 +152,16 @@ def test_run_add_reuses_doc_name_after_failed_attempt(tmp_path: Path, monkeypatc
 
     attempts = {"count": 0}
 
-    def flaky_compile(doc_name, source_path, paths, model, provider, *, language_override=None):
+    async def flaky_compile(llm, doc_name, source_path, paths, model, provider, *, language_override=None):
         attempts["count"] += 1
         if attempts["count"] == 1:
             raise RuntimeError("first attempt failed")
-        return _stub_compile(doc_name, source_path, paths, model, provider, language_override=language_override)
+        return await _stub_compile(llm, doc_name, source_path, paths, model, provider, language_override=language_override)
 
-    monkeypatch.setattr(commands, "compile_short_doc", flaky_compile)
+    monkeypatch.setattr(commands, "compile_short_doc_async", flaky_compile)
 
-    first_output = commands._run_add(str(source), str(workspace))
-    second_output = commands._run_add(str(source), str(workspace))
+    first_output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
+    second_output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
 
     assert "ERROR retry.md: first attempt failed" in first_output
     assert "OK retry.md" in second_output
@@ -177,27 +178,30 @@ def test_run_status_includes_dependency_health(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         commands,
         "capability_statuses",
-        lambda: [
+        lambda **kwargs: [
             CapabilityStatus(label="markdown/text/csv ingest", ready=True, detail="built in"),
-            CapabilityStatus(label="summary and concept generation", ready=False, detail="missing Hermes runtime or json-repair"),
+            CapabilityStatus(
+                label="summary and concept generation",
+                ready=False,
+                detail="plugin LLM access unavailable outside Hermes plugin runtime",
+            ),
         ],
     )
     monkeypatch.setattr(
         commands,
         "dependency_statuses",
-        lambda: [
-            DependencyStatus(label="Hermes runtime", module_name="run_agent", available=False),
-            DependencyStatus(label="json-repair", module_name="json_repair", available=True),
-        ],
+        lambda: [DependencyStatus(label="json-repair", module_name="json_repair", available=True)],
     )
 
     output = commands._run_status(str(workspace))
 
     assert "Capabilities:" in output
     assert "- markdown/text/csv ingest: ready (built in)" in output
-    assert "- summary and concept generation: blocked (missing Hermes runtime or json-repair)" in output
+    assert (
+        "- summary and concept generation: blocked "
+        "(plugin LLM access unavailable outside Hermes plugin runtime)" in output
+    )
     assert "Dependencies:" in output
-    assert "- Hermes runtime: missing" in output
     assert "- json-repair: available" in output
 
 
@@ -209,24 +213,29 @@ def test_run_add_passes_model_provider_and_language_overrides(tmp_path: Path, mo
     captured = {}
     _allow_add_requirements(monkeypatch)
 
-    def capture_compile(doc_name, source_path, paths, model, provider, *, language_override=None):
+    async def capture_compile(llm, doc_name, source_path, paths, model, provider, *, language_override=None):
+        captured["llm"] = llm
         captured["doc_name"] = doc_name
         captured["model"] = model
         captured["provider"] = provider
         captured["language_override"] = language_override
-        return _stub_compile(doc_name, source_path, paths, model, provider)
+        return await _stub_compile(llm, doc_name, source_path, paths, model, provider)
 
-    monkeypatch.setattr(commands, "compile_short_doc", capture_compile)
+    monkeypatch.setattr(commands, "compile_short_doc_async", capture_compile)
 
-    output = commands._run_add(
-        str(source),
-        str(workspace),
-        model_override="override/model",
-        language_override="de",
-        provider_override="override-provider",
+    output = asyncio.run(
+        commands._run_add_async(
+            str(source),
+            str(workspace),
+            model_override="override/model",
+            language_override="de",
+            provider_override="override-provider",
+            llm="fake-llm",
+        )
     )
 
     assert "OK note.md" in output
+    assert captured["llm"] == "fake-llm"
     assert captured["doc_name"] == "note"
     assert captured["model"] == "override/model"
     assert captured["provider"] == "override-provider"
@@ -238,8 +247,8 @@ def test_run_deps_reports_runtime_and_group_commands(monkeypatch) -> None:
     monkeypatch.setattr(
         commands,
         "capability_statuses",
-        lambda: [
-            CapabilityStatus(label="summary and concept generation", ready=False, detail="missing Hermes runtime or json-repair"),
+        lambda **kwargs: [
+            CapabilityStatus(label="summary and concept generation", ready=False, detail="missing json-repair"),
             CapabilityStatus(label="pdf ingest", ready=False, detail="missing PyMuPDF"),
         ],
     )
@@ -247,7 +256,6 @@ def test_run_deps_reports_runtime_and_group_commands(monkeypatch) -> None:
         commands,
         "dependency_statuses",
         lambda: [
-            DependencyStatus(label="Hermes runtime", module_name="run_agent", available=True),
             DependencyStatus(label="json-repair", module_name="json_repair", available=False),
             DependencyStatus(label="PyMuPDF", module_name="pymupdf", available=False),
             DependencyStatus(label="MarkItDown", module_name="markitdown", available=True),
@@ -292,13 +300,14 @@ def test_run_deps_install_reports_success(monkeypatch) -> None:
     monkeypatch.setattr(
         commands,
         "capability_statuses",
-        lambda: [CapabilityStatus(label="summary and concept generation", ready=True, detail="Hermes runtime + json-repair")],
+        lambda **kwargs: [
+            CapabilityStatus(label="summary and concept generation", ready=True, detail="plugin LLM access + json-repair")
+        ],
     )
     monkeypatch.setattr(
         commands,
         "dependency_statuses",
         lambda: [
-            DependencyStatus(label="Hermes runtime", module_name="run_agent", available=True),
             DependencyStatus(label="json-repair", module_name="json_repair", available=True),
         ],
     )
@@ -319,10 +328,10 @@ def test_run_add_blocks_before_side_effects_when_requirements_missing(tmp_path: 
     monkeypatch.setattr(
         commands,
         "_check_add_requirements",
-        lambda files: "ERROR wiki add is blocked by missing runtime dependencies.\nRuntime Python: /runtime/python",
+        lambda files, **kwargs: "ERROR wiki add is blocked by missing runtime dependencies.\nRuntime Python: /runtime/python",
     )
 
-    output = commands._run_add(str(source), str(workspace))
+    output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
 
     assert output.startswith("ERROR wiki add is blocked by missing runtime dependencies.")
     assert not (workspace / "raw" / "note.md").exists()
@@ -392,21 +401,21 @@ def test_run_config_and_add_reject_invalid_overrides(tmp_path: Path) -> None:
         raise AssertionError("Expected ValueError")
 
     try:
-        commands._run_add(str(source), str(workspace), model_override="")
+        asyncio.run(commands._run_add_async(str(source), str(workspace), model_override="", llm="fake-llm"))
     except ValueError as exc:
         assert "Model must not be empty" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
 
     try:
-        commands._run_add(str(source), str(workspace), provider_override="")
+        asyncio.run(commands._run_add_async(str(source), str(workspace), provider_override="", llm="fake-llm"))
     except ValueError as exc:
         assert "Provider must not be empty" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
 
     try:
-        commands._run_add(str(source), str(workspace), language_override="")
+        asyncio.run(commands._run_add_async(str(source), str(workspace), language_override="", llm="fake-llm"))
     except ValueError as exc:
         assert "Language must not be empty" in str(exc)
     else:
@@ -465,7 +474,8 @@ def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> No
 
     captured = {}
 
-    def fake_compile_pageindex(doc_name, raw_path_arg, paths_arg, model, provider, *, language_override=None):
+    async def fake_compile_pageindex(llm, doc_name, raw_path_arg, paths_arg, model, provider, *, language_override=None):
+        captured["llm"] = llm
         captured["doc_name"] = doc_name
         captured["raw_path"] = raw_path_arg
         captured["model"] = model
@@ -477,12 +487,15 @@ def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> No
         )
         return CompileResult(doc_brief="brief", created_concepts=2, updated_concepts=1, related_concepts=0)
 
-    monkeypatch.setattr(commands, "compile_pageindex_doc", fake_compile_pageindex)
+    monkeypatch.setattr(commands, "compile_pageindex_doc_async", fake_compile_pageindex)
 
-    output = commands._run_add(str(source), str(workspace), provider_override="test-provider")
+    output = asyncio.run(
+        commands._run_add_async(str(source), str(workspace), provider_override="test-provider", llm="fake-llm")
+    )
     list_output = commands._run_list(str(workspace))
 
     assert "OK long.pdf: pageindex summary written (30 pages), created 2, updated 1, related 0" in output
+    assert captured["llm"] == "fake-llm"
     assert captured["doc_name"] == "long"
     assert captured["raw_path"] == raw_path
     assert captured["provider"] == "test-provider"
@@ -510,11 +523,11 @@ def test_failed_pageindex_build_does_not_register_hash(tmp_path: Path, monkeypat
     )
     monkeypatch.setattr(
         commands,
-        "compile_pageindex_doc",
+        "compile_pageindex_doc_async",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("pageindex failed")),
     )
 
-    output = commands._run_add(str(source), str(workspace))
+    output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
     status_output = commands._run_status(str(workspace))
 
     assert "ERROR long.pdf: pageindex failed" in output

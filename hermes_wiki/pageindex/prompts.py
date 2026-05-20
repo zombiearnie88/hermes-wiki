@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from ..runtime import generate_conversation
+from ..runtime import agenerate_conversation
 
 
 _SYSTEM_PROMPT = """\
@@ -34,7 +34,8 @@ def _parse_json(text: str) -> list[Any] | dict[str, Any]:
     return parsed
 
 
-def pageindex_generate_text(
+async def pageindex_generate_text_async(
+    llm: Any,
     model: str,
     provider: str | None,
     user_prompt: str,
@@ -42,16 +43,21 @@ def pageindex_generate_text(
     system_prompt: str = _SYSTEM_PROMPT,
     conversation_history: list[dict] | None = None,
     retries: int = 2,
+    purpose: str | None = None,
 ) -> str:
     last_error: Exception | None = None
     for _ in range(max(1, retries)):
         try:
-            return generate_conversation(
-                model,
-                provider,
-                user_prompt,
-                system_message=system_prompt,
-                conversation_history=conversation_history,
+            return (
+                await agenerate_conversation(
+                    llm,
+                    model,
+                    provider,
+                    user_prompt,
+                    system_message=system_prompt,
+                    conversation_history=conversation_history,
+                    purpose=purpose,
+                )
             ).final_response.strip()
         except Exception as exc:
             last_error = exc
@@ -59,7 +65,8 @@ def pageindex_generate_text(
     raise last_error
 
 
-def pageindex_generate_json(
+async def pageindex_generate_json_async(
+    llm: Any,
     model: str,
     provider: str | None,
     user_prompt: str,
@@ -71,7 +78,16 @@ def pageindex_generate_json(
     last_error: Exception | None = None
     for _ in range(max(1, retries)):
         try:
-            parsed = _parse_json(pageindex_generate_text(model, provider, user_prompt, system_prompt=system_prompt, retries=1))
+            parsed = _parse_json(
+                await pageindex_generate_text_async(
+                    llm,
+                    model,
+                    provider,
+                    user_prompt,
+                    system_prompt=system_prompt,
+                    retries=1,
+                )
+            )
             if validator is None or validator(parsed):
                 return parsed
             last_error = ValueError("PageIndex JSON response failed validation.")

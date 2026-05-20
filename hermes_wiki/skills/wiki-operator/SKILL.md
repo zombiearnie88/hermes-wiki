@@ -61,9 +61,10 @@ hermes-wiki init <path> --domain <domain>
 hermes-wiki status --workspace <path>
 hermes-wiki list --workspace <path>
 hermes-wiki config --workspace <path> --model <model> --provider <provider> ...
-hermes-wiki add <path> --workspace <workspace>
 hermes-wiki deps [--install core|pdf|office|all]
 ```
+
+Do not use standalone `hermes-wiki add` for ingest; it has no plugin `ctx.llm` and cannot generate summaries or concepts.
 
 ## Model Selection
 
@@ -72,6 +73,7 @@ hermes-wiki deps [--install core|pdf|office|all]
 - Do not pass `model` or `provider` to `wiki_add` unless the user explicitly asks for a one-off override.
 - For Docker ChatGPT/Codex sessions, use `model: gpt-5.4-mini` and `provider: openai-codex` or another model ID listed by the Hermes Codex provider.
 - Do not use `openai/gpt-*` model IDs with `provider: openai-codex`; use the unprefixed Codex model ID such as `gpt-5.4-mini`.
+- If generation fails with a provider/model override or trust-gate error, tell the operator to enable `plugins.entries.hermes-wiki.llm.allow_provider_override` and `allow_model_override`, then allow the configured provider/model.
 - If the right model/provider is unclear, ask the user or inspect workspace status/config before changing it.
 
 Do not manually create or rewrite the wiki structure unless the user explicitly asks.
@@ -107,10 +109,10 @@ Do not manually create or rewrite the wiki structure unless the user explicitly 
 
 Important blockers from `wiki_status`:
 
-- `summary and concept generation` requires Hermes runtime and `json-repair`
+- `summary and concept generation` requires Hermes plugin LLM access and `json-repair`
 - `pdf ingest` requires PyMuPDF
 - `office/html ingest` requires MarkItDown
-- Long-PDF PageIndex ingest requires Hermes runtime, `json-repair`, and PyMuPDF
+- Long-PDF PageIndex ingest requires Hermes plugin LLM access, `json-repair`, and PyMuPDF
 
 If a needed capability is blocked, say so clearly before continuing.
 

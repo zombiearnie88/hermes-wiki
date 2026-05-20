@@ -2,7 +2,7 @@
 
 Hermes Wiki is a Hermes-native plugin for building and maintaining an LLM wiki from source documents.
 
-The project follows the useful workflow and content model from `OpenKB`, but it is being rebuilt as a Hermes plugin that uses Hermes `AIAgent` for generation instead of LiteLLM.
+The project follows the useful workflow and content model from `OpenKB`, but it is being rebuilt as a Hermes plugin that uses Hermes plugin LLM access (`ctx.llm`) for generation instead of LiteLLM.
 
 ## Status
 
@@ -17,7 +17,7 @@ Current capabilities include:
 - Short-document conversion pipeline for markdown, text, csv, pdf, and MarkItDown-backed formats
 - PageIndex-backed long-PDF ingest above `long_doc_threshold`
 - Guarded long-document retrieval tools for document structure and selected page ranges
-- Hermes `AIAgent`-based summary/concept compiler with opt-in bounded concurrent concept generation
+- Hermes plugin LLM summary/concept compiler with bounded async concept generation
 - Test coverage for workspace commands, conversion paths, compiler writes, and runtime integration
 
 Current boundary:
@@ -27,7 +27,7 @@ Current boundary:
 - retrieval is through Hermes wiki tools, not a separate PageIndex chat surface
 
 See `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md` for the PageIndex implementation plan.
-See `plans/AIAGENT_CONCURRENT_CONCEPT_GENERATION_PLAN.md` for the concurrent concept generation design.
+See `AGENTS.md` for the current plugin LLM generation rules.
 
 ## Workspace Layout
 
@@ -132,21 +132,21 @@ Or install from the plugin root requirements file:
 uv pip install --python <hermes-runtime-python> -r <plugin-root>/requirements.txt
 ```
 
-For the repo-local Docker stack, `hermes-clinic` and `hermes-webui` use different Python interpreters. Install into the interpreter that imports the plugin.
+For the repo-local Docker stack, `hermes-agent` and `hermes-webui` use different Python interpreters. Install into the interpreter that imports the plugin.
 
-For `hermes-clinic`:
+For `hermes-agent`:
 
 ```bash
-docker compose exec -T hermes-clinic uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt
+docker compose -f docker/docker-compose.yml exec -T hermes-agent uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/plugins/hermes-wiki/requirements.txt
 ```
 
 For `hermes-webui`:
 
 ```bash
-docker compose exec -T hermes-webui uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt
+docker compose -f docker/docker-compose.yml exec -T -u 0 hermes-webui uv pip install --python /app/venv/bin/python3 -r /opt/hermes-wiki-src/requirements.txt
 ```
 
-The repo-local Docker stack bootstraps `hermes-clinic` directly at startup. It bootstraps WebUI through the one-shot `hermes-webui-plugin-deps` service, which installs the root `requirements.txt` into the shared `/app/venv` volume before `hermes-webui` starts.
+The repo-local Docker stack bootstraps `hermes-agent` directly at startup. It bootstraps WebUI through the one-shot `hermes-webui-plugin-deps` service, which installs the root `requirements.txt` into the shared `/app/venv` volume before `hermes-webui` starts.
 
 If you cloned this repo fresh, initialize donor references too:
 
@@ -163,20 +163,21 @@ For local development outside Hermes, the package also exposes a small standalon
 ```bash
 hermes-wiki init .
 hermes-wiki config --workspace . --model gpt-5.4-mini --provider openai-codex --language en
-hermes-wiki add ./docs --workspace .
 hermes-wiki status --workspace .
 ```
 
+The standalone `hermes-wiki` executable can initialize, inspect, and configure workspaces, but `hermes-wiki add` cannot generate content because it has no Hermes plugin `ctx.llm`.
+
 ### Runtime requirements
 
-- Hermes runtime providing `run_agent.AIAgent`
+- Hermes plugin runtime providing `ctx.llm` for generation
 - `json-repair` for robust compiler JSON parsing
 - `pymupdf` for PDF ingest
 - `markitdown[all]` for `.docx`, `.pptx`, `.xlsx`, `.html`, and related formats
 
 Install these into the same Python interpreter Hermes uses to import the plugin. In the local container workflow, prefer `uv pip --python <runtime-python> ...` so the runtime environment and the shell environment do not drift apart. The clinic runtime is typically `/opt/hermes/.venv/bin/python`; the WebUI runtime is typically `/app/venv/bin/python3`.
 
-If Hermes is not importable at runtime, generation commands will fail with a clear error.
+If plugin LLM access is unavailable, generation commands fail with a clear error. Non-generation standalone commands still work.
 
 ## Usage
 
@@ -216,12 +217,13 @@ From the standalone dev CLI:
 ```bash
 hermes-wiki init .
 hermes-wiki config --workspace . --model gpt-5.4-mini --provider openai-codex --language en
-hermes-wiki add ./docs --workspace .
 hermes-wiki status --workspace .
 hermes-wiki list --workspace .
 hermes-wiki config --workspace . --model anthropic/claude-opus-4-6 --provider anthropic --language fr
 hermes-wiki deps --install all
 ```
+
+Use `/wiki-add`, the `wiki_add` tool, or `hermes wiki add` inside Hermes for ingest and generation.
 
 `wiki add` uses the persisted `model` and `provider` from `.hermeskb/config.yaml` by default.
 It also accepts one-off `--model`, `--provider`, and `--language` overrides without rewriting workspace config.
@@ -244,6 +246,23 @@ pageindex_max_pages_per_tool_call: 8
 ```
 
 Do not use `openai/gpt-*` model IDs with `provider: openai-codex`; the Codex ChatGPT backend expects model IDs such as `gpt-5.4-mini`, `gpt-5.5`, or `gpt-5.5-mini`.
+
+Hermes fail-closes explicit plugin routing unless the operator allows provider/model overrides for this plugin. Configure exact allowed values where possible:
+
+```yaml
+plugins:
+  entries:
+    hermes-wiki:
+      llm:
+        allow_provider_override: true
+        allow_model_override: true
+        allowed_providers:
+          - openai-codex
+        allowed_models:
+          - gpt-5.4-mini
+```
+
+Development-only setups may use `allowed_providers: ["*"]` and `allowed_models: ["*"]`.
 
 `wiki status` reports both capability readiness and the underlying dependency health for the current environment.
 
@@ -297,21 +316,21 @@ After the Docker stack is running, you can verify the plugin mount and discovery
 ./docker/smoke-test-plugin.sh
 ```
 
-The script verifies real `PluginManager.discover_and_load()` state in both `hermes-clinic` and `hermes-webui`, and checks WebUI imports against `/app/venv/bin/python3`.
+The script verifies real `PluginManager.discover_and_load()` state in both `hermes-agent` and `hermes-webui`, and checks WebUI imports against `/app/venv/bin/python3`.
 
 A plugin can be enabled in `config.yaml` but disabled at runtime if import fails. For example, `plugins.enabled: [hermes-wiki]` with `plugins.disabled: []` can still produce `PluginManager` state `enabled=False` when the loader records an error such as `No module named 'hermes_wiki'`. After the repo-root plugin layout, that usually means the cloned plugin directory is incomplete, corrupted, or mounted from the wrong path. Inspect runtime plugin state rather than relying only on `hermes plugins list`.
 
-The repo-local clinic startup and WebUI dependency bootstrap service install the wiki plugin dependencies, and the smoke test verifies those imports in `/opt/hermes/.venv/bin/python` and `/app/venv/bin/python3`.
+The repo-local Hermes Agent startup and WebUI dependency bootstrap service install the wiki plugin dependencies, and the smoke test verifies those imports in `/opt/hermes/.venv/bin/python` and `/app/venv/bin/python3`.
 
 ### Docker Development Reloads
 
-The repo-local Docker stack bind-mounts the repository root into both `hermes-clinic` and `hermes-webui` as the `hermes-wiki` plugin directory, so source edits are visible inside running containers immediately.
+The repo-local Docker stack bind-mounts the repository root into `hermes-agent` as the `hermes-wiki` plugin directory and into `hermes-webui` at `/opt/hermes-wiki-src`, then symlinks it into the WebUI plugin directory. Source edits are visible inside running containers immediately.
 
 Restart behavior depends on what is being tested:
 
-- For one-off `docker compose exec hermes-clinic ... hermes ...` commands, Python source changes usually do not need a restart because each command starts a fresh Python process.
+- For one-off `docker compose -f docker/docker-compose.yml exec hermes-agent ... hermes ...` commands, Python source changes usually do not need a restart because each command starts a fresh Python process.
 - For the running WebUI, restart `hermes-webui` after Python, plugin registration, schema, or bundled skill changes so loaded modules and plugin metadata refresh.
-- For root `requirements.txt` changes, reinstall dependencies into the affected runtime with `uv pip --python`. Use `/opt/hermes/.venv/bin/python` for `hermes-clinic` and `/app/venv/bin/python3` for `hermes-webui`.
+- For root `requirements.txt` changes, reinstall dependencies into the affected runtime with `uv pip --python`. Use `/opt/hermes/.venv/bin/python` for `hermes-agent` and `/app/venv/bin/python3` for `hermes-webui`.
 - For `docker/docker-compose.yml`, volume, image, or environment changes, recreate the affected containers with `docker compose up -d --force-recreate`.
 
 From `docker/`, restart the WebUI with:
@@ -324,7 +343,7 @@ docker compose restart hermes-webui
 
 - New runtime code should live in `hermes_wiki/`
 - The repository root is the directory-plugin source mounted by the local Docker setup
-- Do not build on LiteLLM for plugin generation paths
+- Do not build on LiteLLM or direct `run_agent.AIAgent` for plugin generation paths
 - Long PDFs route through PageIndex; long non-PDF documents are still deferred
 
 See `AGENTS.md`, `plans/IMPLEMENTATION_PLAN.md`, and `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md` for the current working rules and roadmap.

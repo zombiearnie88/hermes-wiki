@@ -5,6 +5,7 @@ import json
 from .commands import (
     _resolve_workspace,
     _run_add,
+    _run_add_async,
     _run_deps,
     _run_config,
     _run_init,
@@ -76,12 +77,30 @@ def wiki_add(args: dict, **kwargs) -> str:
     return _wrap_output("wiki_add", output, path=path, workspace=workspace, model=model, provider=provider)
 
 
-def wiki_status(args: dict, **kwargs) -> str:
+async def wiki_add_async(args: dict, *, llm, **kwargs) -> str:
     del kwargs
+    path = args.get("path")
     workspace = args.get("workspace") or None
+    model = args.get("model") or None
+    provider = args.get("provider") or None
+    language = args.get("language") or None
+
+    if not path:
+        return _failure("wiki_add", "Missing required argument: path")
 
     try:
-        output = _run_status(workspace)
+        output = await _run_add_async(path, workspace, model, language, provider, llm=llm)
+    except Exception as exc:
+        return _failure("wiki_add", str(exc), path=path, workspace=workspace, model=model, provider=provider)
+    return _wrap_output("wiki_add", output, path=path, workspace=workspace, model=model, provider=provider)
+
+
+def wiki_status(args: dict, **kwargs) -> str:
+    workspace = args.get("workspace") or None
+    plugin_llm_available = bool(kwargs.get("plugin_llm_available", False))
+
+    try:
+        output = _run_status(workspace, plugin_llm_available=plugin_llm_available)
     except Exception as exc:
         return _failure("wiki_status", str(exc), workspace=workspace)
     return _wrap_output("wiki_status", output, workspace=workspace)
@@ -122,11 +141,11 @@ def wiki_list(args: dict, **kwargs) -> str:
 
 
 def wiki_deps(args: dict, **kwargs) -> str:
-    del kwargs
     install = args.get("install") or None
+    plugin_llm_available = bool(kwargs.get("plugin_llm_available", False))
 
     try:
-        output = _run_deps(install)
+        output = _run_deps(install, plugin_llm_available=plugin_llm_available)
     except Exception as exc:
         return _failure("wiki_deps", str(exc), install=install)
     return _wrap_output("wiki_deps", output, install=install)

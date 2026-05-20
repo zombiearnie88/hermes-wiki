@@ -4,18 +4,49 @@ from pathlib import Path
 
 from . import schemas, tools
 from .commands import (
-    handle_wiki_add_command,
-    handle_wiki_cli,
     handle_wiki_config_command,
-    handle_wiki_deps_command,
     handle_wiki_init_command,
     handle_wiki_list_command,
-    handle_wiki_status_command,
+    make_wiki_add_command_handler,
+    make_wiki_cli_handler,
+    make_wiki_deps_command_handler,
+    make_wiki_status_command_handler,
     setup_wiki_cli,
 )
 
 
+def _ctx_has_llm(ctx) -> bool:
+    return getattr(ctx, "llm", None) is not None
+
+
+def _make_wiki_add_tool(ctx):
+    async def handler(args: dict, **kwargs) -> str:
+        return await tools.wiki_add_async(args, llm=getattr(ctx, "llm", None), **kwargs)
+
+    return handler
+
+
+def _make_wiki_status_tool(ctx):
+    def handler(args: dict, **kwargs) -> str:
+        return tools.wiki_status(args, plugin_llm_available=_ctx_has_llm(ctx), **kwargs)
+
+    return handler
+
+
+def _make_wiki_deps_tool(ctx):
+    def handler(args: dict, **kwargs) -> str:
+        return tools.wiki_deps(args, plugin_llm_available=_ctx_has_llm(ctx), **kwargs)
+
+    return handler
+
+
 def register(ctx) -> None:
+    wiki_cli_handler = make_wiki_cli_handler(ctx)
+
+    def setup_ctx_wiki_cli(subparser) -> None:
+        setup_wiki_cli(subparser)
+        subparser.set_defaults(func=wiki_cli_handler)
+
     ctx.register_tool(
         name="wiki_init",
         toolset="hermes_wiki",
@@ -27,14 +58,15 @@ def register(ctx) -> None:
         name="wiki_add",
         toolset="hermes_wiki",
         schema=schemas.WIKI_ADD,
-        handler=tools.wiki_add,
+        handler=_make_wiki_add_tool(ctx),
+        is_async=True,
         description="Ingest a file or directory into a Hermes wiki workspace.",
     )
     ctx.register_tool(
         name="wiki_status",
         toolset="hermes_wiki",
         schema=schemas.WIKI_STATUS,
-        handler=tools.wiki_status,
+        handler=_make_wiki_status_tool(ctx),
         description="Show Hermes wiki workspace status and capability readiness.",
     )
     ctx.register_tool(
@@ -55,7 +87,7 @@ def register(ctx) -> None:
         name="wiki_deps",
         toolset="hermes_wiki",
         schema=schemas.WIKI_DEPS,
-        handler=tools.wiki_deps,
+        handler=_make_wiki_deps_tool(ctx),
         description="Inspect or install Hermes wiki runtime dependencies.",
     )
     ctx.register_tool(
@@ -81,13 +113,13 @@ def register(ctx) -> None:
     )
     ctx.register_command(
         "wiki-add",
-        handler=handle_wiki_add_command,
+        handler=make_wiki_add_command_handler(ctx),
         description="Add a file or directory to the wiki workspace",
         args_hint="<path> [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG]",
     )
     ctx.register_command(
         "wiki-status",
-        handler=handle_wiki_status_command,
+        handler=make_wiki_status_command_handler(ctx),
         description="Show Hermes wiki workspace status",
         args_hint="[--workspace DIR]",
     )
@@ -105,7 +137,7 @@ def register(ctx) -> None:
     )
     ctx.register_command(
         "wiki-deps",
-        handler=handle_wiki_deps_command,
+        handler=make_wiki_deps_command_handler(ctx),
         description="Inspect or install Hermes wiki runtime dependencies",
         args_hint="[--install core|pdf|office|all]",
     )
@@ -113,8 +145,8 @@ def register(ctx) -> None:
         name="wiki",
         help="Manage Hermes wiki workspaces",
         description="Initialize, ingest, and inspect Hermes wiki workspaces",
-        setup_fn=setup_wiki_cli,
-        handler_fn=handle_wiki_cli,
+        setup_fn=setup_ctx_wiki_cli,
+        handler_fn=wiki_cli_handler,
     )
 
     skills_dir = Path(__file__).parent / "skills"

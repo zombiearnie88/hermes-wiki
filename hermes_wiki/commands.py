@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import shlex
 import subprocess
+import threading
 from pathlib import Path
+from typing import Any
 
-from .compiler import compile_pageindex_doc, compile_short_doc
+from .compiler import compile_pageindex_doc_async, compile_short_doc_async
 from .config import DEFAULT_CONFIG, load_config, normalize_concept_generation_concurrency, save_config
 from .converter import SUPPORTED_EXTENSIONS, convert_document
 from .deps import (
@@ -25,6 +28,35 @@ from .workspace import find_workspace, init_workspace, read_workspace_status, wo
 _PDF_EXTENSIONS = {".pdf"}
 _MARKITDOWN_EXTENSIONS = {".docx", ".pptx", ".xlsx", ".html", ".htm"}
 _INSTALL_GROUP_ORDER = ("core", "pdf", "office")
+
+
+def _standalone_generation_unavailable() -> str:
+    return (
+        "ERROR wiki add requires Hermes plugin runtime LLM access. Use the wiki_add tool, /wiki-add, "
+        "or hermes wiki add with the plugin loaded; the standalone hermes-wiki add executable cannot generate content."
+    )
+
+
+def _run_coro_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, Any] = {}
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:  # pragma: no cover - defensive bridge for embedded CLIs
+            result["error"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
 
 
 def _resolve_workspace(workspace_override: str | None) -> tuple[Path | None, str | None]:
@@ -84,11 +116,7 @@ def is_failure_output(text: str) -> bool:
 
 
 def _dependency_repair_lines(*, include_group_commands: bool = False) -> list[str]:
-    available = {entry.module_name: entry.available for entry in dependency_statuses()}
     lines: list[str] = []
-
-    if not available.get("run_agent", False):
-        lines.append("- Hermes runtime: run this plugin inside a Hermes environment that provides run_agent.AIAgent")
 
     if include_group_commands:
         group_lines = []
@@ -101,7 +129,7 @@ def _dependency_repair_lines(*, include_group_commands: bool = False) -> list[st
             all_command = build_uv_install_command("all", missing_only=True)
             if all_command:
                 lines.append(f"- Install all missing packages: {all_command}")
-        elif available.get("run_agent", False):
+        else:
             lines.append("- Installable packages: none missing")
         return lines
 
@@ -111,14 +139,18 @@ def _dependency_repair_lines(*, include_group_commands: bool = False) -> list[st
     return lines
 
 
-def _dependency_report_lines(*, include_group_commands: bool = False) -> list[str]:
+def _dependency_report_lines(*, include_group_commands: bool = False, plugin_llm_available: bool = False) -> list[str]:
     dependency_lines = [
         f"- {entry.label}: {'available' if entry.available else 'missing'}"
         for entry in dependency_statuses()
     ]
+    try:
+        capabilities = capability_statuses(plugin_llm_available=plugin_llm_available)
+    except TypeError:  # compatibility for tests monkeypatching the imported function
+        capabilities = capability_statuses()
     capability_lines = [
         f"- {entry.label}: {'ready' if entry.ready else 'blocked'} ({entry.detail})"
-        for entry in capability_statuses()
+        for entry in capabilities
     ]
     lines = [
         f"Runtime Python: {runtime_python_path()}",
@@ -144,15 +176,15 @@ def _required_install_groups_for_files(files: list[Path]) -> list[str]:
     return groups
 
 
-def _check_add_requirements(files: list[Path]) -> str | None:
+def _check_add_requirements(files: list[Path], *, plugin_llm_available: bool = False) -> str | None:
     required_groups = _required_install_groups_for_files(files)
     available = {entry.module_name: entry.available for entry in dependency_statuses()}
     missing_messages: list[str] = []
     missing_install_groups: list[str] = []
 
-    if not available.get("run_agent", False):
+    if not plugin_llm_available:
         missing_messages.append(
-            "- Hermes runtime is missing: run this plugin inside a Hermes environment that provides run_agent.AIAgent."
+            "- Hermes plugin LLM access is unavailable outside the plugin runtime."
         )
     if "core" in required_groups and not available.get("json_repair", False):
         missing_messages.append("- Missing json-repair for summary and concept generation.")
@@ -180,7 +212,7 @@ def _check_add_requirements(files: list[Path]) -> str | None:
     return "\n".join(lines)
 
 
-def _format_status() -> str:
+def _format_status(*, plugin_llm_available: bool = False) -> str:
     workspace_root, error = _resolve_workspace(None)
     if error:
         return error
@@ -199,7 +231,7 @@ def _format_status() -> str:
             f"Summary pages: {status.summary_pages}",
             f"Concept pages: {status.concept_pages}",
             f"Known hashes: {status.known_hashes}",
-            *_dependency_report_lines(),
+            *_dependency_report_lines(plugin_llm_available=plugin_llm_available),
         ]
     )
 
@@ -231,7 +263,7 @@ def _run_init(
     )
 
 
-def _run_status(workspace_override: str | None) -> str:
+def _run_status(workspace_override: str | None, *, plugin_llm_available: bool = False) -> str:
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
         return error
@@ -249,14 +281,16 @@ def _run_status(workspace_override: str | None) -> str:
             f"Summary pages: {status.summary_pages}",
             f"Concept pages: {status.concept_pages}",
             f"Known hashes: {status.known_hashes}",
-            *_dependency_report_lines(),
+            *_dependency_report_lines(plugin_llm_available=plugin_llm_available),
         ]
     )
 
 
-def _run_deps(install: str | None = None) -> str:
+def _run_deps(install: str | None = None, *, plugin_llm_available: bool = False) -> str:
     if install is None:
-        return "\n".join(_dependency_report_lines(include_group_commands=True))
+        return "\n".join(
+            _dependency_report_lines(include_group_commands=True, plugin_llm_available=plugin_llm_available)
+        )
 
     if install not in install_groups():
         valid_groups = ", ".join(install_groups())
@@ -290,7 +324,7 @@ def _run_deps(install: str | None = None) -> str:
             lines.append(f"Command: {result.command}")
     else:
         lines = [f"Dependency group '{install}' is already satisfied."]
-    lines.extend(_dependency_report_lines())
+    lines.extend(_dependency_report_lines(plugin_llm_available=plugin_llm_available))
     return "\n".join(lines)
 
 
@@ -388,6 +422,21 @@ def _run_add(
     language_override: str | None = None,
     provider_override: str | None = None,
 ) -> str:
+    del target_path, workspace_override, model_override, language_override, provider_override
+    return _standalone_generation_unavailable()
+
+
+async def _run_add_async(
+    target_path: str,
+    workspace_override: str | None,
+    model_override: str | None = None,
+    language_override: str | None = None,
+    provider_override: str | None = None,
+    *,
+    llm: Any,
+) -> str:
+    if llm is None:
+        return _standalone_generation_unavailable()
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
         return error
@@ -411,7 +460,7 @@ def _run_add(
             return f"Unsupported file type: {target.suffix}. Supported: {supported}"
         files = [target]
 
-    dependency_error = _check_add_requirements(files)
+    dependency_error = _check_add_requirements(files, plugin_llm_available=True)
     if dependency_error:
         return dependency_error
 
@@ -429,7 +478,8 @@ def _run_add(
                     lines.append(f"ERROR {file_path.name}: conversion did not produce a raw PDF")
                     continue
                 doc_name = convert_result.doc_name or file_path.stem
-                compile_result = compile_pageindex_doc(
+                compile_result = await compile_pageindex_doc_async(
+                    llm,
                     doc_name,
                     convert_result.raw_path,
                     paths,
@@ -461,7 +511,8 @@ def _run_add(
                 continue
 
             doc_name = convert_result.doc_name or file_path.stem
-            compile_result = compile_short_doc(
+            compile_result = await compile_short_doc_async(
+                llm,
                 doc_name,
                 convert_result.source_path,
                 paths,
@@ -582,6 +633,23 @@ def handle_wiki_status_command(raw_args: str) -> str:
         return f"Failed to read status: {exc}"
 
 
+def make_wiki_status_command_handler(ctx):
+    def handler(raw_args: str) -> str:
+        parser = _build_status_parser("/wiki-status")
+        try:
+            args = parser.parse_args(shlex.split(raw_args))
+        except SystemExit:
+            return "Usage: /wiki-status [--workspace DIR]"
+        if args.help:
+            return "Usage: /wiki-status [--workspace DIR]"
+        try:
+            return _run_status(args.workspace, plugin_llm_available=getattr(ctx, "llm", None) is not None)
+        except Exception as exc:
+            return f"Failed to read status: {exc}"
+
+    return handler
+
+
 def handle_wiki_list_command(raw_args: str) -> str:
     parser = _build_list_parser("/wiki-list")
     try:
@@ -631,6 +699,30 @@ def handle_wiki_add_command(raw_args: str) -> str:
         return f"Failed to add content: {exc}"
 
 
+def make_wiki_add_command_handler(ctx):
+    async def handler(raw_args: str) -> str:
+        parser = _build_add_parser("/wiki-add")
+        try:
+            args = parser.parse_args(shlex.split(raw_args))
+        except SystemExit:
+            return "Usage: /wiki-add <path> [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG]"
+        if args.help:
+            return "Usage: /wiki-add <path> [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG]"
+        try:
+            return await _run_add_async(
+                args.path,
+                args.workspace,
+                args.model,
+                args.language,
+                args.provider,
+                llm=getattr(ctx, "llm", None),
+            )
+        except Exception as exc:
+            return f"Failed to add content: {exc}"
+
+    return handler
+
+
 def handle_wiki_deps_command(raw_args: str) -> str:
     parser = _build_deps_parser("/wiki-deps")
     try:
@@ -643,6 +735,23 @@ def handle_wiki_deps_command(raw_args: str) -> str:
         return _run_deps(args.install)
     except Exception as exc:
         return f"Failed to inspect dependencies: {exc}"
+
+
+def make_wiki_deps_command_handler(ctx):
+    def handler(raw_args: str) -> str:
+        parser = _build_deps_parser("/wiki-deps")
+        try:
+            args = parser.parse_args(shlex.split(raw_args))
+        except SystemExit:
+            return "Usage: /wiki-deps [--install core|pdf|office|all]"
+        if args.help:
+            return "Usage: /wiki-deps [--install core|pdf|office|all]"
+        try:
+            return _run_deps(args.install, plugin_llm_available=getattr(ctx, "llm", None) is not None)
+        except Exception as exc:
+            return f"Failed to inspect dependencies: {exc}"
+
+    return handler
 
 
 def setup_wiki_cli(subparser) -> None:
@@ -683,7 +792,7 @@ def setup_wiki_cli(subparser) -> None:
     subparser.set_defaults(func=handle_wiki_cli)
 
 
-def handle_wiki_cli(args) -> None:
+def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
     try:
         if args.wiki_command == "init":
             output = _run_init(
@@ -695,9 +804,21 @@ def handle_wiki_cli(args) -> None:
                 domain=args.domain,
             )
         elif args.wiki_command == "add":
-            output = _run_add(args.path, args.workspace, args.model, args.language, args.provider)
+            if llm is None:
+                output = _run_add(args.path, args.workspace, args.model, args.language, args.provider)
+            else:
+                output = _run_coro_sync(
+                    _run_add_async(
+                        args.path,
+                        args.workspace,
+                        args.model,
+                        args.language,
+                        args.provider,
+                        llm=llm,
+                    )
+                )
         elif args.wiki_command == "status":
-            output = _run_status(args.workspace)
+            output = _run_status(args.workspace, plugin_llm_available=llm is not None)
         elif args.wiki_command == "list":
             output = _run_list(args.workspace)
         elif args.wiki_command == "config":
@@ -710,9 +831,20 @@ def handle_wiki_cli(args) -> None:
                 concept_generation_concurrency=args.concept_generation_concurrency,
             )
         elif args.wiki_command == "deps":
-            output = _run_deps(args.install)
+            output = _run_deps(args.install, plugin_llm_available=llm is not None)
         else:
             output = "Usage: hermes wiki <init|add|status|list|config|deps>"
     except Exception as exc:
         output = f"Hermes wiki command failed: {exc}"
     print(output)
+
+
+def handle_wiki_cli(args) -> None:
+    _handle_wiki_cli(args)
+
+
+def make_wiki_cli_handler(ctx):
+    def handler(args) -> None:
+        _handle_wiki_cli(args, llm=getattr(ctx, "llm", None))
+
+    return handler

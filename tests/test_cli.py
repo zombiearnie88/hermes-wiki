@@ -63,27 +63,10 @@ def test_main_returns_nonzero_for_invalid_settings(tmp_path: Path, capsys) -> No
     assert "Model must not be empty" in captured.err
 
 
-def test_run_args_add_passes_overrides(tmp_path: Path, monkeypatch) -> None:
+def test_run_args_add_fails_without_plugin_llm(tmp_path: Path) -> None:
     parser = cli.build_parser()
     source = tmp_path / "note.md"
     source.write_text("# Note\n", encoding="utf-8")
-    captured = {}
-
-    def fake_run_add(
-        path: str,
-        workspace: str | None,
-        model: str | None,
-        language: str | None,
-        provider: str | None,
-    ) -> str:
-        captured["path"] = path
-        captured["workspace"] = workspace
-        captured["model"] = model
-        captured["language"] = language
-        captured["provider"] = provider
-        return "ok"
-
-    monkeypatch.setattr(cli, "_run_add", fake_run_add)
     args = parser.parse_args([
         "add",
         str(source),
@@ -99,12 +82,8 @@ def test_run_args_add_passes_overrides(tmp_path: Path, monkeypatch) -> None:
 
     output = cli.run_args(args)
 
-    assert output == "ok"
-    assert captured["path"] == str(source)
-    assert captured["workspace"] == str(tmp_path)
-    assert captured["model"] == "override/model"
-    assert captured["provider"] == "override-provider"
-    assert captured["language"] == "de"
+    assert output.startswith("ERROR wiki add requires Hermes plugin runtime LLM access")
+    assert "standalone hermes-wiki add" in output
 
 
 def test_run_args_config_updates_workspace(tmp_path: Path) -> None:

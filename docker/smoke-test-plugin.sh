@@ -41,9 +41,9 @@ check_service_running() {
   [[ "$running" == "$service" ]] || fail "service '$service' is not running"
 }
 
-check_clinic_plugin_loaded() {
-  note "Checking runtime plugin load in hermes-clinic"
-  docker compose exec -T hermes-clinic /opt/hermes/.venv/bin/python - <<'PY'
+check_agent_plugin_loaded() {
+  note "Checking runtime plugin load in hermes-agent"
+  docker compose exec -T hermes-agent /opt/hermes/.venv/bin/python - <<'PY'
 try:
     from hermes_cli.plugins import PluginManager
 except ModuleNotFoundError as exc:
@@ -62,21 +62,21 @@ if plugin.get("enabled") is not True or plugin.get("error") is not None:
 PY
 }
 
-check_clinic_files() {
-  note "Checking mounted plugin files in hermes-clinic"
-  docker compose exec -T hermes-clinic sh -lc '
-    test -f /opt/data/profiles/clinic/plugins/hermes-wiki/plugin.yaml &&
-    test -f /opt/data/profiles/clinic/plugins/hermes-wiki/__init__.py &&
-    test -f /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt &&
-    test -f /opt/data/profiles/clinic/plugins/hermes-wiki/skills/wiki-operator/SKILL.md
+check_agent_files() {
+  note "Checking mounted plugin files in hermes-agent"
+  docker compose exec -T hermes-agent sh -lc '
+    test -f /opt/data/plugins/hermes-wiki/plugin.yaml &&
+    test -f /opt/data/plugins/hermes-wiki/__init__.py &&
+    test -f /opt/data/plugins/hermes-wiki/requirements.txt &&
+    test -f /opt/data/plugins/hermes-wiki/hermes_wiki/skills/wiki-operator/SKILL.md
   '
 }
 
-check_clinic_runtime_deps() {
-  note "Checking wiki runtime dependencies in hermes-clinic"
-  docker compose exec -T hermes-clinic /opt/hermes/.venv/bin/python -c '
+check_agent_runtime_deps() {
+  note "Checking wiki runtime dependencies in hermes-agent"
+  docker compose exec -T hermes-agent /opt/hermes/.venv/bin/python -c '
 import importlib.util
-required = ("run_agent", "json_repair", "pymupdf", "markitdown")
+required = ("json_repair", "pymupdf", "markitdown")
 missing = [name for name in required if importlib.util.find_spec(name) is None]
 if missing:
     raise SystemExit(f"missing runtime dependencies: {missing}")
@@ -89,7 +89,7 @@ check_webui_files() {
     test -f /home/hermeswebui/.hermes/plugins/hermes-wiki/plugin.yaml &&
     test -f /home/hermeswebui/.hermes/plugins/hermes-wiki/__init__.py &&
     test -f /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt &&
-    test -f /home/hermeswebui/.hermes/plugins/hermes-wiki/skills/wiki-operator/SKILL.md
+    test -f /home/hermeswebui/.hermes/plugins/hermes-wiki/hermes_wiki/skills/wiki-operator/SKILL.md
   '
 }
 
@@ -128,12 +128,12 @@ PY
 
 main() {
   note "Checking Docker service status"
-  check_service_running hermes-clinic
+  check_service_running hermes-agent
   check_service_running hermes-webui
 
-  check_clinic_files
-  retry 10 2 "hermes-clinic runtime dependencies" check_clinic_runtime_deps
-  retry 10 2 "hermes-clinic runtime plugin load" check_clinic_plugin_loaded
+  check_agent_files
+  retry 10 2 "hermes-agent runtime dependencies" check_agent_runtime_deps
+  retry 10 2 "hermes-agent runtime plugin load" check_agent_plugin_loaded
   check_webui_files
   retry 10 2 "hermes-webui runtime dependencies" check_webui_runtime_deps
   retry 60 5 "hermes-webui runtime plugin load" check_webui_plugin_loaded

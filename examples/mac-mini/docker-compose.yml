@@ -11,7 +11,7 @@
 
 services:
   hermes-agent-src-init:
-    image: nousresearch/hermes-agent:latest
+    image: nousresearch/hermes-agent:main
     restart: "no"
     command: version
     volumes:
@@ -20,7 +20,7 @@ services:
       - hermes-private
 
   hermes-agent:
-    image: nousresearch/hermes-agent:latest
+    image: nousresearch/hermes-agent:main
     restart: unless-stopped
     depends_on:
       hermes-agent-src-init:

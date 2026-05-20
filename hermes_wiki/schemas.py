@@ -50,7 +50,7 @@ WIKI_ADD = {
     "description": (
         "Ingest a source file or directory into a Hermes wiki workspace. "
         "Use this for supported markdown, text, CSV, PDF, and MarkItDown-backed formats when the user wants summaries and concept pages created or updated. "
-        "Uses the workspace config model and provider unless explicit one-off overrides are supplied."
+        "Uses Hermes plugin LLM access with the workspace config model and provider unless explicit one-off overrides are supplied."
     ),
     "parameters": {
         "type": "object",
@@ -159,7 +159,7 @@ WIKI_DEPS = {
     "name": "wiki_deps",
     "description": (
         "Inspect Hermes wiki runtime dependency health and optionally install missing dependency groups. "
-        "Use this when wiki capabilities are blocked by missing json-repair, PyMuPDF, or MarkItDown."
+        "Use this when wiki capabilities are blocked by missing json-repair, PyMuPDF, MarkItDown, or plugin LLM access."
     ),
     "parameters": {
         "type": "object",

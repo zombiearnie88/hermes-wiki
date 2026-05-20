@@ -1,162 +1,137 @@
 from __future__ import annotations
 
-import sys
+import asyncio
 import types
 
 import pytest
 
-from hermes_wiki.runtime import HermesRuntimeError, generate_conversation, generate_text
+from hermes_wiki.runtime import HermesRuntimeError, agenerate_conversation, generate_text
 
 
-def test_generate_conversation_uses_run_agent_aiagent(monkeypatch) -> None:
+def test_agenerate_conversation_calls_plugin_llm_acomplete() -> None:
     captured = {}
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            captured["kwargs"] = kwargs
+    class FakeLLM:
+        async def acomplete(self, **kwargs):
+            captured.update(kwargs)
+            return types.SimpleNamespace(text=" generated text ")
 
-        def run_conversation(self, **kwargs) -> dict:
-            captured["conversation_kwargs"] = kwargs
-            return {
-                "final_response": " generated text ",
-                "messages": [{"role": "assistant", "content": "generated text"}],
-            }
-
-    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
-    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
-
-    history = [{"role": "user", "content": "prior"}]
-    result = generate_conversation(
-        "test/model",
-        "test-provider",
-        "user prompt",
-        system_message="system prompt",
-        conversation_history=history,
-        task_id="task-1",
+    result = asyncio.run(
+        agenerate_conversation(
+            FakeLLM(),
+            "test/model",
+            "test-provider",
+            "user prompt",
+            system_message="system prompt",
+            purpose="wiki.summary.doc",
+        )
     )
 
     assert result.final_response == "generated text"
-    assert result.messages == [{"role": "assistant", "content": "generated text"}]
-    assert captured["kwargs"]["model"] == "test/model"
-    assert captured["kwargs"]["provider"] == "test-provider"
-    assert captured["kwargs"]["enabled_toolsets"] == []
-    assert captured["kwargs"]["quiet_mode"] is True
-    assert captured["kwargs"]["skip_memory"] is True
-    assert captured["kwargs"]["skip_context_files"] is True
-    assert captured["kwargs"]["max_iterations"] == 1
-    assert captured["kwargs"]["ephemeral_system_prompt"] == "system prompt"
-    assert "system_message" not in captured["conversation_kwargs"]
-    assert captured["conversation_kwargs"]["user_message"] == "user prompt"
-    assert captured["conversation_kwargs"]["conversation_history"] == history
-    assert captured["conversation_kwargs"]["conversation_history"] is not history
-    assert captured["conversation_kwargs"]["task_id"] == "task-1"
+    assert result.messages == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "user prompt"},
+        {"role": "assistant", "content": "generated text"},
+    ]
+    assert captured["model"] == "test/model"
+    assert captured["provider"] == "test-provider"
+    assert captured["temperature"] == 0.0
+    assert captured["purpose"] == "wiki.summary.doc"
+    assert captured["messages"] == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "user prompt"},
+    ]
 
 
-def test_generate_conversation_constructs_new_aiagent_per_call(monkeypatch) -> None:
-    instances = []
-
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            instances.append(self)
-
-        def run_conversation(self, **kwargs) -> dict:
-            return {"final_response": "generated text", "messages": []}
-
-    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
-    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
-
-    generate_conversation("test/model", "test-provider", "first")
-    generate_conversation("test/model", "test-provider", "second")
-
-    assert len(instances) == 2
-    assert instances[0] is not instances[1]
-
-
-def test_generate_text_wraps_conversation(monkeypatch) -> None:
+def test_agenerate_conversation_uses_copied_history() -> None:
     captured = {}
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            captured["kwargs"] = kwargs
+    class FakeLLM:
+        async def acomplete(self, **kwargs):
+            captured.update(kwargs)
+            return types.SimpleNamespace(text="response")
 
-        def run_conversation(self, **kwargs) -> dict:
-            captured["conversation_kwargs"] = kwargs
-            return {"final_response": " generated text ", "messages": []}
+    history = [{"role": "system", "content": "base"}]
 
-    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
-    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
+    result = asyncio.run(
+        agenerate_conversation(
+            FakeLLM(),
+            "test/model",
+            None,
+            "next",
+            system_message="ignored",
+            conversation_history=history,
+        )
+    )
 
-    result = generate_text("test/model", None, "system prompt", "user prompt")
+    assert result.final_response == "response"
+    assert captured["messages"] == [
+        {"role": "system", "content": "base"},
+        {"role": "user", "content": "next"},
+    ]
+    assert captured["messages"] is not history
+
+
+def test_generate_text_wraps_sync_plugin_llm_complete() -> None:
+    captured = {}
+
+    class FakeLLM:
+        def complete(self, **kwargs):
+            captured.update(kwargs)
+            return types.SimpleNamespace(text=" generated text ")
+
+    result = generate_text(FakeLLM(), "test/model", None, "system prompt", "user prompt", purpose="wiki.pageindex")
 
     assert result == "generated text"
-    assert "provider" not in captured["kwargs"]
-    assert captured["kwargs"]["ephemeral_system_prompt"] == "system prompt"
-    assert "system_message" not in captured["conversation_kwargs"]
-    assert captured["conversation_kwargs"]["user_message"] == "user prompt"
-    assert captured["conversation_kwargs"]["conversation_history"] is None
+    assert captured["messages"] == [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "user prompt"},
+    ]
+    assert captured["provider"] is None
+    assert captured["model"] == "test/model"
+    assert captured["temperature"] == 0.0
+    assert captured["purpose"] == "wiki.pageindex"
 
 
-def test_generate_text_reports_missing_run_agent(monkeypatch) -> None:
-    monkeypatch.delitem(sys.modules, "run_agent", raising=False)
+def test_agenerate_conversation_reports_missing_plugin_llm() -> None:
+    with pytest.raises(HermesRuntimeError) as exc_info:
+        asyncio.run(agenerate_conversation(None, "test/model", "test-provider", "user"))
 
-    real_import = __import__
+    assert "plugin LLM access is unavailable" in str(exc_info.value)
+    assert "standalone hermes-wiki" in str(exc_info.value)
 
-    def fake_import(name, *args, **kwargs):
-        if name == "run_agent":
-            raise ModuleNotFoundError("No module named 'run_agent'")
-        return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr("builtins.__import__", fake_import)
+def test_agenerate_conversation_reports_empty_response() -> None:
+    class FakeLLM:
+        async def acomplete(self, **kwargs):
+            return types.SimpleNamespace(text="  ")
 
     with pytest.raises(HermesRuntimeError) as exc_info:
-        generate_text("test/model", "test-provider", "system", "user")
-
-    assert "could not import run_agent.AIAgent" in str(exc_info.value)
-
-
-def test_generate_text_reports_empty_response(monkeypatch) -> None:
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run_conversation(self, **kwargs) -> dict:
-            return {"final_response": "  ", "messages": []}
-
-    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
-    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
-
-    with pytest.raises(HermesRuntimeError) as exc_info:
-        generate_text("test/model", "test-provider", "system", "user")
+        asyncio.run(agenerate_conversation(FakeLLM(), "test/model", "test-provider", "user"))
 
     assert "empty response" in str(exc_info.value)
 
 
-def test_generate_text_wraps_agent_errors(monkeypatch) -> None:
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def run_conversation(self, **kwargs) -> dict:
-            raise ValueError("boom")
-
-    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
-    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
+def test_agenerate_conversation_wraps_trust_gate_errors() -> None:
+    class FakeLLM:
+        async def acomplete(self, **kwargs):
+            raise ValueError("provider override is not allowed")
 
     with pytest.raises(HermesRuntimeError) as exc_info:
-        generate_text("test/model", "test-provider", "system", "user")
+        asyncio.run(agenerate_conversation(FakeLLM(), "test/model", "test-provider", "user"))
 
-    assert "Hermes generation failed: boom" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "Hermes plugin LLM generation failed" in message
+    assert "allow_provider_override" in message
+    assert "allow_model_override" in message
 
 
-def test_generate_text_suggests_codex_model_without_openai_prefix(monkeypatch) -> None:
-    class FakeAgent:
-        def __init__(self, **kwargs):
+def test_agenerate_conversation_suggests_codex_model_without_openai_prefix() -> None:
+    class FakeLLM:
+        async def acomplete(self, **kwargs):
             raise ValueError("model is not supported")
 
-    fake_module = types.SimpleNamespace(AIAgent=FakeAgent)
-    monkeypatch.setitem(sys.modules, "run_agent", fake_module)
-
     with pytest.raises(HermesRuntimeError) as exc_info:
-        generate_text("openai/gpt-5.4-mini", "openai-codex", "system", "user")
+        asyncio.run(agenerate_conversation(FakeLLM(), "openai/gpt-5.4-mini", "openai-codex", "user"))
 
     assert "model: gpt-5.4-mini, provider: openai-codex" in str(exc_info.value)

@@ -4,26 +4,26 @@
 
 This repo builds a Hermes plugin that helps users create and maintain an LLM wiki.
 
-The product direction is to clone the useful workflow from `code-donor/OpenKB`, but to implement it as a Hermes-native plugin that uses Hermes `AIAgent` for generation.
+The product direction is to clone the useful workflow from `code-donor/OpenKB`, but to implement it as a Hermes-native plugin that uses Hermes plugin LLM access (`ctx.llm`) for generation.
 
 ## Source of Truth
 
 - `code-donor/OpenKB/` is a reference donor, not the runtime target
-- `code-donor/PageIndex/` is a reference donor for v2 long-doc work, not a v1 dependency
+- `code-donor/PageIndex/` is a reference donor; runtime PageIndex code is repo-owned under `hermes_wiki/pageindex/`
 - New implementation work should live in new repo-owned plugin code, not inside donor folders
 - V2 PageIndex planning lives in `plans/V2_PAGEINDEX_IMPLEMENTATION_PLAN.md`
 
 ## Core Decisions
 
 - Use Hermes plugin commands, not an OpenKB standalone CLI
-- Use Hermes `AIAgent`, not LiteLLM
+- Use Hermes plugin `ctx.llm`, not direct `run_agent.AIAgent` or LiteLLM
 - Use workspace layout:
   - `AGENTS.md`
   - `raw/`
   - `wiki/`
   - `.hermeskb/`
-- Target OpenKB short-doc parity for v1
-- Defer long-doc `PageIndex` support to v2
+- Target OpenKB short-doc parity plus repo-owned long-PDF PageIndex support
+- Defer unsupported long non-PDF workflows
 
 ## V1 Scope
 
@@ -39,13 +39,14 @@ The product direction is to clone the useful workflow from `code-donor/OpenKB`, 
 - wiki index maintenance
 - append-only operation log
 - file hash dedupe
+- PageIndex-backed long-PDF ingest
 
 ### Do not build in v1
 
-- PageIndex long-document indexing
 - OpenKB query/chat/lint/watch surfaces
 - LiteLLM-based generation paths
 - custom Hermes model-provider plugin
+- long non-PDF PageIndex workflows
 
 ## Workspace Layout
 
@@ -66,6 +67,7 @@ wiki/
 .hermeskb/
   config.yaml
   hashes.json
+  pageindex/
 ```
 
 Root `AGENTS.md` is agent-facing runtime guidance for Hermes. `wiki/SCHEMA.md` is the compiler-facing wiki content contract.
@@ -98,20 +100,18 @@ Root `AGENTS.md` is agent-facing runtime guidance for Hermes. `wiki/SCHEMA.md` i
 
 When generating summaries or concepts:
 
-- instantiate a fresh `AIAgent` per generation task
-- set `quiet_mode=True`
-- set `skip_memory=True`
-- set `skip_context_files=True`
-- keep generation deterministic where possible
-- do not share one `AIAgent` across concurrent tasks
-- start with sequential concept generation in v1
-- if concept concurrency is added, bound it and keep a fresh `AIAgent` per concept task
-- keep concept file writes, backlinks, and index updates serial after concurrent generation finishes
+- call `ctx.llm.acomplete()` through the runtime adapter
+- pass workspace `.hermeskb/config.yaml` `model` and `provider` explicitly to `ctx.llm`
+- keep generation deterministic where possible with `temperature=0.0`
+- use bounded async fan-out for concept generation
+- keep concept file writes, backlinks, related links, and index updates serial after concurrent generation finishes
+- do not add a fallback to direct `run_agent.AIAgent` or LiteLLM
 
 Rationale:
 
 - the wiki compiler needs controlled prompts and predictable outputs
 - ambient Hermes context files should not leak into wiki-compilation prompts
+- plugin LLM trust gates must allow explicit provider/model routing for workspace config values
 
 ## Prompt and Content Rules
 
@@ -129,13 +129,14 @@ Rationale:
 
 ## Long-Doc Boundary
 
-If a file crosses the long-doc threshold, do not attempt partial PageIndex integration in v1.
+Long PDFs route through the repo-owned PageIndex pipeline when they meet the configured threshold.
 
 Expected behavior:
 
-- detect the long document
-- return a clear not-supported-yet message
-- leave the file uncompiled rather than routing through LiteLLM
+- detect supported long PDFs and compile PageIndex summaries through `ctx.llm`
+- keep PageIndex state under `.hermeskb/pageindex/`
+- return a clear not-supported-yet message for unsupported long non-PDF workflows
+- leave unsupported files uncompiled rather than routing through LiteLLM
 
 ## Implementation Priorities
 
@@ -154,14 +155,14 @@ Build in this order:
 - prefer small, direct ports over broad abstraction
 - keep donor-derived behavior intact unless there is a clear Hermes reason to change it
 - isolate donor references from new runtime code
-- avoid adding compatibility layers for LiteLLM
+- avoid adding compatibility layers for LiteLLM or direct `run_agent.AIAgent`
 - fail clearly on unsupported long-doc workflows in v1
 - add tests around file writes, index updates, and generated-JSON parsing
 
 ## Docker Runtime Reload
 
 - When plugin Python code, schemas, slash commands, or bundled skills change, recreate Hermes Docker containers when possible so runtime imports and skill registrations are refreshed.
-- Prefer `docker compose -f docker/docker-compose.yml up -d --force-recreate hermes-clinic hermes-webui` for this repo's local Docker setup.
+- Prefer `docker compose -f docker/docker-compose.yml up -d --force-recreate hermes-agent hermes-webui` for this repo's local Docker setup.
 - Existing wiki workspaces keep their current `AGENTS.md` and `wiki/SCHEMA.md`; recreate/restart only reloads plugin runtime code and bundled skill files.
 
 ## Success Criteria

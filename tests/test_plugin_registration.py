@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 import types
 from pathlib import Path
@@ -49,6 +50,9 @@ def test_register_wires_tools_commands_and_skills() -> None:
         "get_page_content",
     ]
     assert all(tool["toolset"] == "hermes_wiki" for tool in ctx.tools)
+    wiki_add_tool = next(tool for tool in ctx.tools if tool["name"] == "wiki_add")
+    assert wiki_add_tool["is_async"] is True
+    assert inspect.iscoroutinefunction(wiki_add_tool["handler"])
     assert [command["name"] for command in ctx.commands] == [
         "wiki-init",
         "wiki-add",
@@ -61,6 +65,7 @@ def test_register_wires_tools_commands_and_skills() -> None:
     assert "--domain DOMAIN" in wiki_init_command["args_hint"]
     wiki_add_command = next(command for command in ctx.commands if command["name"] == "wiki-add")
     assert wiki_add_command["args_hint"] == "<path> [--workspace DIR] [--model MODEL] [--provider PROVIDER] [--language LANG]"
+    assert inspect.iscoroutinefunction(wiki_add_command["handler"])
     assert len(ctx.cli_commands) == 1
     assert ctx.cli_commands[0]["name"] == "wiki"
     assert len(ctx.skills) == 1
@@ -159,11 +164,12 @@ def test_root_plugin_loads_under_hermes_directory_module_name() -> None:
 def test_docker_compose_mounts_repo_root_plugin_directly() -> None:
     compose_text = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert "- ..:/opt/data/profiles/clinic/plugins/hermes-wiki:ro" in compose_text
-    assert "- ..:/home/hermeswebui/.hermes/plugins/hermes-wiki:ro" in compose_text
-    assert "- ..:/home/hermeswebui/.hermes/plugins/hermes-wiki" in compose_text
-    assert "uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/profiles/clinic/plugins/hermes-wiki/requirements.txt" in compose_text
-    assert "uv pip install --python /app/venv/bin/python3 -r /home/hermeswebui/.hermes/plugins/hermes-wiki/requirements.txt" in compose_text
+    assert "- ..:/opt/data/plugins/hermes-wiki:ro" in compose_text
+    assert "- ..:/opt/hermes-wiki-src:ro" in compose_text
+    assert "ln -s /opt/hermes-wiki-src /home/hermeswebui/.hermes/plugins/hermes-wiki" in compose_text
+    assert "uv pip install --python /opt/hermes/.venv/bin/python -r /opt/data/plugins/hermes-wiki/requirements.txt" in compose_text
+    assert "uv pip install --python /app/venv/bin/python3 -r /opt/hermes-wiki-src/requirements.txt" in compose_text
+    assert "profiles/clinic" not in compose_text
     assert "../hermes_wiki" not in compose_text
     assert "- ..:/opt/hermes-wiki:ro" not in compose_text
     assert "cp /opt/hermes-wiki" not in compose_text

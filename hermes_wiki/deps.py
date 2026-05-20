@@ -42,7 +42,6 @@ class DependencyInstallResult:
 
 _INSTALL_GROUPS = ("core", "pdf", "office", "all")
 _DEPENDENCY_SPECS = (
-    DependencySpec(label="Hermes runtime", module_name="run_agent"),
     DependencySpec(label="json-repair", module_name="json_repair", package_spec="json-repair", group="core"),
     DependencySpec(label="PyMuPDF", module_name="pymupdf", package_spec="pymupdf", group="pdf"),
     DependencySpec(
@@ -145,12 +144,18 @@ def dependency_statuses() -> list[DependencyStatus]:
     return [_probe(spec.module_name, spec.label) for spec in _DEPENDENCY_SPECS]
 
 
-def capability_statuses() -> list[CapabilityStatus]:
+def capability_statuses(*, plugin_llm_available: bool = False) -> list[CapabilityStatus]:
     deps = {entry.module_name: entry.available for entry in dependency_statuses()}
-    hermes_ready = deps.get("run_agent", False)
     json_ready = deps.get("json_repair", False)
     pymupdf_ready = deps.get("pymupdf", False)
     markitdown_ready = deps.get("markitdown", False)
+    generation_ready = plugin_llm_available and json_ready
+    if generation_ready:
+        generation_detail = "plugin LLM access + json-repair"
+    elif not plugin_llm_available:
+        generation_detail = "plugin LLM access unavailable outside Hermes plugin runtime"
+    else:
+        generation_detail = "missing json-repair"
 
     return [
         CapabilityStatus(label="markdown/text/csv ingest", ready=True, detail="built in"),
@@ -166,11 +171,7 @@ def capability_statuses() -> list[CapabilityStatus]:
         ),
         CapabilityStatus(
             label="summary and concept generation",
-            ready=hermes_ready and json_ready,
-            detail=(
-                "Hermes runtime + json-repair"
-                if hermes_ready and json_ready
-                else "missing Hermes runtime or json-repair"
-            ),
+            ready=generation_ready,
+            detail=generation_detail,
         ),
     ]

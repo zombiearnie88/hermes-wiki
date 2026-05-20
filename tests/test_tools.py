@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import hermes_wiki.tools as plugin_tools
@@ -51,7 +52,7 @@ def test_wiki_init_returns_success_json(monkeypatch) -> None:
 
 
 def test_wiki_add_requires_path() -> None:
-    payload = json.loads(plugin_tools.wiki_add({}))
+    payload = json.loads(asyncio.run(plugin_tools.wiki_add_async({}, llm="fake-llm")))
 
     assert payload["ok"] is False
     assert payload["action"] == "wiki_add"
@@ -61,13 +62,16 @@ def test_wiki_add_requires_path() -> None:
 def test_wiki_add_uses_workspace_config_without_model(monkeypatch) -> None:
     captured = {}
 
-    def fake_run_add(
+    async def fake_run_add(
         path: str,
         workspace: str | None,
         model: str | None,
         language: str | None,
         provider: str | None,
+        *,
+        llm,
     ) -> str:
+        captured["llm"] = llm
         captured["path"] = path
         captured["workspace"] = workspace
         captured["model"] = model
@@ -75,9 +79,9 @@ def test_wiki_add_uses_workspace_config_without_model(monkeypatch) -> None:
         captured["provider"] = provider
         return "ok"
 
-    monkeypatch.setattr(plugin_tools, "_run_add", fake_run_add)
+    monkeypatch.setattr(plugin_tools, "_run_add_async", fake_run_add)
 
-    payload = json.loads(plugin_tools.wiki_add({"path": "/tmp/note.md"}))
+    payload = json.loads(asyncio.run(plugin_tools.wiki_add_async({"path": "/tmp/note.md"}, llm="fake-llm")))
 
     assert payload["ok"] is True
     assert payload["action"] == "wiki_add"
@@ -87,19 +91,23 @@ def test_wiki_add_uses_workspace_config_without_model(monkeypatch) -> None:
         "model": None,
         "language": None,
         "provider": None,
+        "llm": "fake-llm",
     }
 
 
 def test_wiki_add_passes_overrides(monkeypatch) -> None:
     captured = {}
 
-    def fake_run_add(
+    async def fake_run_add(
         path: str,
         workspace: str | None,
         model: str | None,
         language: str | None,
         provider: str | None,
+        *,
+        llm,
     ) -> str:
+        captured["llm"] = llm
         captured["path"] = path
         captured["workspace"] = workspace
         captured["model"] = model
@@ -107,17 +115,20 @@ def test_wiki_add_passes_overrides(monkeypatch) -> None:
         captured["provider"] = provider
         return "ok"
 
-    monkeypatch.setattr(plugin_tools, "_run_add", fake_run_add)
+    monkeypatch.setattr(plugin_tools, "_run_add_async", fake_run_add)
 
     payload = json.loads(
-        plugin_tools.wiki_add(
-            {
-                "path": "/tmp/note.md",
-                "workspace": "/tmp/wiki",
-                "model": "gpt-5.4-mini",
-                "provider": "openai-codex",
-                "language": "en",
-            }
+        asyncio.run(
+            plugin_tools.wiki_add_async(
+                {
+                    "path": "/tmp/note.md",
+                    "workspace": "/tmp/wiki",
+                    "model": "gpt-5.4-mini",
+                    "provider": "openai-codex",
+                    "language": "en",
+                },
+                llm="fake-llm",
+            )
         )
     )
 
@@ -131,6 +142,7 @@ def test_wiki_add_passes_overrides(monkeypatch) -> None:
         "model": "gpt-5.4-mini",
         "language": "en",
         "provider": "openai-codex",
+        "llm": "fake-llm",
     }
 
 
@@ -138,7 +150,7 @@ def test_wiki_status_classifies_failure_output(monkeypatch) -> None:
     monkeypatch.setattr(
         plugin_tools,
         "_run_status",
-        lambda workspace: "Workspace path does not exist: /missing/workspace",
+        lambda workspace, **kwargs: "Workspace path does not exist: /missing/workspace",
     )
 
     payload = json.loads(plugin_tools.wiki_status({"workspace": "/missing/workspace"}))
@@ -212,7 +224,7 @@ def test_wiki_list_wraps_exceptions(monkeypatch) -> None:
 def test_wiki_deps_passes_install_group(monkeypatch) -> None:
     captured = {}
 
-    def fake_run_deps(install: str | None = None) -> str:
+    def fake_run_deps(install: str | None = None, **kwargs) -> str:
         captured["install"] = install
         return "Installed dependency group 'core': json-repair"
 
@@ -230,7 +242,7 @@ def test_wiki_deps_classifies_failure_output(monkeypatch) -> None:
     monkeypatch.setattr(
         plugin_tools,
         "_run_deps",
-        lambda install: "ERROR dependency install failed: uv is unavailable",
+        lambda install, **kwargs: "ERROR dependency install failed: uv is unavailable",
     )
 
     payload = json.loads(plugin_tools.wiki_deps({"install": "all"}))
