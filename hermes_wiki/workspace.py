@@ -145,9 +145,11 @@ def init_workspace(
 
 
 def read_workspace_status(paths: WorkspacePaths) -> WorkspaceStatus:
+    """Return workspace counters and current persisted wiki settings."""
     config = load_config(paths.config_path)
     registry = HashRegistry(paths.hashes_path)
-    source_pages = len(list((paths.wiki_dir / "sources").glob("*.md")))
+    sources_dir = paths.wiki_dir / "sources"
+    source_pages = len(list(sources_dir.glob("*.md"))) + len(list(sources_dir.glob("*.jsonl")))
     summary_pages = len(list((paths.wiki_dir / "summaries").glob("*.md")))
     concept_pages = len(list((paths.wiki_dir / "concepts").glob("*.md")))
     raw_files = len([path for path in paths.raw_dir.iterdir() if path.is_file()]) if paths.raw_dir.exists() else 0

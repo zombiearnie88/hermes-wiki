@@ -41,18 +41,17 @@ wiki/
   pageindex/
 ```
 
-Long-document state should live in `.hermeskb/pageindex/{doc_name}/`:
+Long-document PageIndex metadata should live in `.hermeskb/pageindex/{doc_name}/`:
 
 ```text
 .hermeskb/pageindex/{doc_name}/
   index.json
-  pages.jsonl
   audit.json
 ```
 
 - `index.json`: metadata, page count, document description, and tree structure without heavy page text.
-- `pages.jsonl`: one JSON record per page with `page` and `content`.
 - `audit.json`: optional diagnostics for build stage status, retries, failures, and model settings.
+- `wiki/sources/{doc_name}.jsonl`: one source record per page with `page` and `content`, including extracted image references.
 
 ## Schema Roles
 
@@ -105,7 +104,7 @@ Suggested responsibilities:
 - `config.py`: resolves PageIndex settings from `.hermeskb/config.yaml`.
 - `prompts.py`: keeps donor-derived prompt templates in one place.
 - `retrieve.py`: implements document structure and page-content retrieval helpers.
-- `store.py`: reads and writes `.hermeskb/pageindex/{doc_name}/` files.
+- `store.py`: reads and writes `.hermeskb/pageindex/{doc_name}/` metadata plus `wiki/sources/{doc_name}.jsonl` page content.
 - `tree.py`: tree normalization, rendering, node IDs, page ranges, text attachment, and text stripping.
 - `types.py`: small dataclasses for PageIndex build results and retrieval records.
 
@@ -136,11 +135,11 @@ High-level flow:
 
 1. `wiki add` detects a PDF with `page_count >= long_doc_threshold`.
 2. The file is copied into `raw/` as today.
-3. The PageIndex builder extracts per-page text with PyMuPDF.
+3. The PageIndex builder extracts per-page text and image references with PyMuPDF.
 4. The builder detects or derives document structure.
 5. The builder assigns page ranges and node IDs.
 6. The builder generates node summaries and a document description with `AIAgent`.
-7. The PageIndex store writes `index.json`, `pages.jsonl`, and optional `audit.json`.
+7. The PageIndex store writes `index.json`, optional `audit.json`, and `wiki/sources/{doc_name}.jsonl`.
 8. The wiki compiler writes a `doc_type: pageindex` summary page.
 9. Existing concept planning and concept write/update logic runs against the generated long-doc summary.
 10. `wiki/index.md` is updated with a `(pageindex)` document entry.
@@ -180,7 +179,7 @@ Recommended PageIndex summary frontmatter:
 ---
 doc_type: pageindex
 pageindex_id: {doc_name}
-full_text: pageindex/{doc_name}
+full_text: sources/{doc_name}.jsonl
 page_count: 128
 ---
 ```
@@ -285,7 +284,7 @@ Unit tests:
 
 - Page range parsing accepts `5`, `5-7`, and `3,8`.
 - Page range parsing rejects invalid, reversed, out-of-range, and too-large requests.
-- PageIndex store writes and reloads `index.json` and `pages.jsonl`.
+- PageIndex store writes and reloads `index.json` and `wiki/sources/{doc_name}.jsonl`.
 - Tree rendering omits full text but includes titles, node IDs, summaries, and page ranges.
 - Runtime adapter calls Hermes generation through fresh `AIAgent` helper calls.
 

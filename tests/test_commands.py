@@ -482,7 +482,7 @@ def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> No
         captured["provider"] = provider
         captured["language_override"] = language_override
         (paths_arg.wiki_dir / "summaries" / f"{doc_name}.md").write_text(
-            "---\ndoc_type: pageindex\nfull_text: pageindex/long\n---\n\n# Summary\n",
+            "---\ndoc_type: pageindex\nfull_text: sources/long.jsonl\n---\n\n# Summary\n",
             encoding="utf-8",
         )
         return CompileResult(doc_brief="brief", created_concepts=2, updated_concepts=1, related_concepts=0)

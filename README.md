@@ -270,11 +270,10 @@ If `wiki status` shows missing `json-repair`, `PyMuPDF`, or `MarkItDown`, use `w
 
 ### Long PDFs
 
-PDFs with page counts greater than or equal to `long_doc_threshold` are copied to `raw/` and compiled through PageIndex. The wiki summary uses `doc_type: pageindex`, stores compact structure under `wiki/summaries/`, and writes PageIndex state to `.hermeskb/pageindex/{doc_name}/`:
+PDFs with page counts greater than or equal to `long_doc_threshold` are copied to `raw/` and compiled through PageIndex. The wiki summary uses `doc_type: pageindex`, stores compact structure under `wiki/summaries/`, writes page source content to `wiki/sources/{doc_name}.jsonl`, and writes internal PageIndex state to `.hermeskb/pageindex/{doc_name}/`:
 
 ```text
 index.json
-pages.jsonl
 audit.json
 ```
 

@@ -31,7 +31,7 @@ def build_schema_md(domain: str | None = None) -> str:
 
 ## Directory Structure
 - raw/ - Local copies of ingested source files.
-- wiki/sources/ - Document content for ingested files. Do not edit directly unless repairing conversion output.
+- wiki/sources/ - Document content for ingested files, including PageIndex page JSONL. Do not edit directly unless repairing conversion output.
 - wiki/sources/images/ - Extracted or copied images referenced by source markdown.
 - wiki/summaries/ - One summary page per source document.
 - wiki/concepts/ - Cross-document concept pages synthesized over time.
@@ -52,7 +52,7 @@ def build_schema_md(domain: str | None = None) -> str:
 
 ## Summary Frontmatter
 - Short-document summaries use `doc_type: short` and `full_text: sources/{{doc_name}}.md`.
-- PageIndex summaries use `doc_type: pageindex`, `pageindex_id: {{doc_name}}`, `full_text: pageindex/{{doc_name}}`, and `page_count`.
+- PageIndex summaries use `doc_type: pageindex`, `pageindex_id: {{doc_name}}`, `full_text: sources/{{doc_name}}.jsonl`, and `page_count`.
 
 ## PageIndex Summary Rules
 - Include a concise model-generated document overview.
@@ -96,9 +96,6 @@ def build_agents_md() -> str:
     return """\
 # Hermes Wiki Agent Guidance
 
-You are operating over a Hermes Wiki workspace, a knowledge-base Q&A agent.
-You answer questions by searching the wiki.
-
 ## Wiki Schema 
 - The authoritative wiki content contract is `wiki/SCHEMA.md`.
 
@@ -113,8 +110,8 @@ You answer questions by searching the wiki.
    `full_text` frontmatter field with the path to the original document content:
    - Short documents (doc_type: short): read_file with that path.
    - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
-     with tight page ranges. The summary shows document tree structure with page
-     ranges to help you target. Never fetch the whole document.
+     with tight page ranges. The source JSONL in full_text stores page-level text
+     and image references. Never fetch the whole document.
 5. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
     Use an image-viewing tool only if the current Hermes runtime registered one.
 6. Synthesize a clear, concise, well-cited answer grounded in wiki content.

@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from hermes_wiki.images import load_pymupdf
+from hermes_wiki.pageindex.builder import extract_pdf_pages_and_toc
 from hermes_wiki.pageindex.retrieve import PageRangeError, get_document_structure, get_page_content, parse_page_range
-from hermes_wiki.pageindex.store import read_pageindex, write_pageindex
+from hermes_wiki.pageindex.store import page_source_path, read_page_source, read_pageindex, write_pageindex
 from hermes_wiki.pageindex.tree import render_tree, strip_text_fields
 from hermes_wiki.pageindex.types import PageIndexBuildResult, PageRecord
 from hermes_wiki.workspace import init_workspace, workspace_paths
@@ -68,6 +70,47 @@ def test_pageindex_store_writes_and_reloads(tmp_path: Path) -> None:
     assert loaded.pages[1].content == "page two"
     assert loaded.audit["status"] == "completed"
     assert "text" not in json.dumps(loaded.structure)
+    assert page_source_path(paths, "paper").is_file()
+    assert not (paths.pageindex_dir / "paper" / "pages.jsonl").exists()
+
+
+def test_pageindex_pdf_extraction_writes_image_references(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    init_workspace(workspace, model="test/model", language="en", long_doc_threshold=2)
+    paths = workspace_paths(workspace)
+    pdf_path = tmp_path / "paper.pdf"
+
+    pymupdf = load_pymupdf()
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 48, 48), False)
+    pix.clear_with(0x336699)
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Visible page text")
+    page.insert_image(pymupdf.Rect(72, 100, 152, 180), pixmap=pix)
+    document.save(str(pdf_path))
+    document.close()
+
+    extraction = extract_pdf_pages_and_toc(pdf_path, "paper", paths)
+
+    assert extraction.image_count == 1
+    assert extraction.extractable_text.strip() == "Visible page text"
+    assert "Visible page text" in extraction.pages[0].content
+    assert "![image](sources/images/paper/p1_img1.png)" in extraction.pages[0].content
+    assert (paths.wiki_dir / "sources" / "images" / "paper" / "p1_img1.png").is_file()
+
+
+def test_pageindex_source_reader_migrates_legacy_pages_jsonl(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    init_workspace(workspace, model="test/model", language="en", long_doc_threshold=2)
+    paths = workspace_paths(workspace)
+    legacy_dir = paths.pageindex_dir / "paper"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "pages.jsonl").write_text('{"page": 1, "content": "legacy page"}\n', encoding="utf-8")
+
+    pages = read_page_source(paths, "paper")
+
+    assert pages == [PageRecord(page=1, content="legacy page")]
+    assert page_source_path(paths, "paper").read_text(encoding="utf-8") == '{"page": 1, "content": "legacy page"}\n'
 
 
 def test_retrieve_helpers_return_structure_and_selected_pages(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ _INSTALL_GROUP_ORDER = ("core", "pdf", "office")
 
 
 def _standalone_generation_unavailable() -> str:
+    """Return the standard error for add paths without plugin LLM access."""
     return (
         "ERROR wiki add requires Hermes plugin runtime LLM access. Use the wiki_add tool, /wiki-add, "
         "or hermes wiki add with the plugin loaded; the standalone hermes-wiki add executable cannot generate content."
@@ -38,6 +39,7 @@ def _standalone_generation_unavailable() -> str:
 
 
 def _run_coro_sync(coro):
+    """Run an async command from sync CLI code, including nested-loop contexts."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -60,6 +62,7 @@ def _run_coro_sync(coro):
 
 
 def _resolve_workspace(workspace_override: str | None) -> tuple[Path | None, str | None]:
+    """Resolve a workspace override or discover the nearest workspace."""
     if workspace_override:
         candidate = Path(workspace_override).expanduser().resolve()
         if not candidate.exists():
@@ -76,6 +79,7 @@ def _resolve_workspace(workspace_override: str | None) -> tuple[Path | None, str
 
 
 def _collect_supported_files(target: Path) -> list[Path]:
+    """Collect supported ingest files from a directory tree."""
     return [
         path
         for path in sorted(target.rglob("*"))
@@ -90,6 +94,7 @@ def _validate_settings(
     language: str | None = None,
     long_doc_threshold: int | None = None,
 ) -> None:
+    """Validate user-provided command settings before persistence or use."""
     if model is not None and not str(model).strip():
         raise ValueError("Model must not be empty.")
     if provider is not None and not str(provider).strip():
@@ -101,6 +106,7 @@ def _validate_settings(
 
 
 def is_failure_output(text: str) -> bool:
+    """Return true when a command response should be treated as failed output."""
     failure_prefixes = (
         "Usage:",
         "Failed ",
@@ -116,6 +122,7 @@ def is_failure_output(text: str) -> bool:
 
 
 def _dependency_repair_lines(*, include_group_commands: bool = False) -> list[str]:
+    """Build user-facing dependency repair command suggestions."""
     lines: list[str] = []
 
     if include_group_commands:
@@ -140,6 +147,7 @@ def _dependency_repair_lines(*, include_group_commands: bool = False) -> list[st
 
 
 def _dependency_report_lines(*, include_group_commands: bool = False, plugin_llm_available: bool = False) -> list[str]:
+    """Render dependency and capability status lines for status/deps commands."""
     dependency_lines = [
         f"- {entry.label}: {'available' if entry.available else 'missing'}"
         for entry in dependency_statuses()
@@ -166,6 +174,7 @@ def _dependency_report_lines(*, include_group_commands: bool = False, plugin_llm
 
 
 def _required_install_groups_for_files(files: list[Path]) -> list[str]:
+    """Map candidate ingest files to required dependency groups."""
     groups = ["core"]
     for file_path in files:
         suffix = file_path.suffix.lower()
@@ -177,6 +186,7 @@ def _required_install_groups_for_files(files: list[Path]) -> list[str]:
 
 
 def _check_add_requirements(files: list[Path], *, plugin_llm_available: bool = False) -> str | None:
+    """Return an add-blocking dependency error, or None when ingest can run."""
     required_groups = _required_install_groups_for_files(files)
     available = {entry.module_name: entry.available for entry in dependency_statuses()}
     missing_messages: list[str] = []
@@ -213,6 +223,7 @@ def _check_add_requirements(files: list[Path], *, plugin_llm_available: bool = F
 
 
 def _format_status(*, plugin_llm_available: bool = False) -> str:
+    """Render status for the workspace discovered from the current directory."""
     workspace_root, error = _resolve_workspace(None)
     if error:
         return error
@@ -245,6 +256,7 @@ def _run_init(
     provider: str | None = None,
     domain: str | None = None,
 ) -> str:
+    """Initialize a new Hermes wiki workspace and return a concise report."""
     _validate_settings(model=model, provider=provider, language=language, long_doc_threshold=long_doc_threshold)
     root = Path(path).expanduser().resolve()
     init_workspace(
@@ -264,6 +276,7 @@ def _run_init(
 
 
 def _run_status(workspace_override: str | None, *, plugin_llm_available: bool = False) -> str:
+    """Render status for an explicit or discovered workspace."""
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
         return error
@@ -287,6 +300,7 @@ def _run_status(workspace_override: str | None, *, plugin_llm_available: bool = 
 
 
 def _run_deps(install: str | None = None, *, plugin_llm_available: bool = False) -> str:
+    """Inspect or install dependency groups for the active runtime."""
     if install is None:
         return "\n".join(
             _dependency_report_lines(include_group_commands=True, plugin_llm_available=plugin_llm_available)
@@ -329,6 +343,7 @@ def _run_deps(install: str | None = None, *, plugin_llm_available: bool = False)
 
 
 def _run_list(workspace_override: str | None) -> str:
+    """List ingested documents and concept pages in a workspace."""
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
         return error
@@ -368,6 +383,7 @@ def _run_config(
     long_doc_threshold: int | None = None,
     concept_generation_concurrency: int | None = None,
 ) -> str:
+    """Show or update persisted workspace configuration."""
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
         return error
@@ -422,6 +438,7 @@ def _run_add(
     language_override: str | None = None,
     provider_override: str | None = None,
 ) -> str:
+    """Reject standalone add because compilation requires plugin LLM access."""
     del target_path, workspace_override, model_override, language_override, provider_override
     return _standalone_generation_unavailable()
 
@@ -435,8 +452,11 @@ async def _run_add_async(
     *,
     llm: Any,
 ) -> str:
+    """Add files through Hermes plugin LLM access and compile wiki content."""
     if llm is None:
         return _standalone_generation_unavailable()
+
+    # Step 1: resolve workspace, settings, and target paths before touching files.
     workspace_root, error = _resolve_workspace(workspace_override)
     if error:
         return error
@@ -460,6 +480,7 @@ async def _run_add_async(
             return f"Unsupported file type: {target.suffix}. Supported: {supported}"
         files = [target]
 
+    # Step 2: fail early when the current runtime cannot process these files.
     dependency_error = _check_add_requirements(files, plugin_llm_available=True)
     if dependency_error:
         return dependency_error
@@ -468,6 +489,7 @@ async def _run_add_async(
     registry = HashRegistry(paths.hashes_path)
     for file_path in files:
         try:
+            # Step 3: convert or route each file before invoking the compiler.
             convert_result = convert_document(file_path, paths)
             if convert_result.skipped:
                 lines.append(f"SKIP {file_path.name}: already in workspace")
@@ -478,6 +500,8 @@ async def _run_add_async(
                     lines.append(f"ERROR {file_path.name}: conversion did not produce a raw PDF")
                     continue
                 doc_name = convert_result.doc_name or file_path.stem
+
+                # Step 4a: compile supported long PDFs through PageIndex.
                 compile_result = await compile_pageindex_doc_async(
                     llm,
                     doc_name,
@@ -511,6 +535,8 @@ async def _run_add_async(
                 continue
 
             doc_name = convert_result.doc_name or file_path.stem
+
+            # Step 4b: compile normal source markdown into summary and concepts.
             compile_result = await compile_short_doc_async(
                 llm,
                 doc_name,
@@ -543,6 +569,7 @@ async def _run_add_async(
 
 
 def _build_init_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by wiki init command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("path", nargs="?", default=".")
     parser.add_argument("--model", default=DEFAULT_CONFIG["model"])
@@ -555,6 +582,7 @@ def _build_init_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def _build_status_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by wiki status command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("--workspace", default=None)
     parser.add_argument("-h", "--help", action="store_true")
@@ -562,6 +590,7 @@ def _build_status_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def _build_list_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by wiki list command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("--workspace", default=None)
     parser.add_argument("-h", "--help", action="store_true")
@@ -569,6 +598,7 @@ def _build_list_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def _build_config_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by wiki config command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("--workspace", default=None)
     parser.add_argument("--model", default=None)
@@ -581,6 +611,7 @@ def _build_config_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def _build_add_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by wiki add command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("path")
     parser.add_argument("--workspace", default=None)
@@ -592,6 +623,7 @@ def _build_add_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def _build_deps_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by wiki deps command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("--install", choices=install_groups(), default=None)
     parser.add_argument("-h", "--help", action="store_true")
@@ -599,6 +631,7 @@ def _build_deps_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def handle_wiki_init_command(raw_args: str) -> str:
+    """Handle the slash-command form of wiki init."""
     parser = _build_init_parser("/wiki-init")
     try:
         args = parser.parse_args(shlex.split(raw_args))
@@ -620,6 +653,7 @@ def handle_wiki_init_command(raw_args: str) -> str:
 
 
 def handle_wiki_status_command(raw_args: str) -> str:
+    """Handle standalone slash-command status without plugin capability context."""
     parser = _build_status_parser("/wiki-status")
     try:
         args = parser.parse_args(shlex.split(raw_args))
@@ -634,6 +668,7 @@ def handle_wiki_status_command(raw_args: str) -> str:
 
 
 def make_wiki_status_command_handler(ctx):
+    """Create a status handler that can report plugin LLM availability."""
     def handler(raw_args: str) -> str:
         parser = _build_status_parser("/wiki-status")
         try:
@@ -651,6 +686,7 @@ def make_wiki_status_command_handler(ctx):
 
 
 def handle_wiki_list_command(raw_args: str) -> str:
+    """Handle the slash-command form of wiki list."""
     parser = _build_list_parser("/wiki-list")
     try:
         args = parser.parse_args(shlex.split(raw_args))
@@ -665,6 +701,7 @@ def handle_wiki_list_command(raw_args: str) -> str:
 
 
 def handle_wiki_config_command(raw_args: str) -> str:
+    """Handle the slash-command form of wiki config."""
     parser = _build_config_parser("/wiki-config")
     try:
         args = parser.parse_args(shlex.split(raw_args))
@@ -686,6 +723,7 @@ def handle_wiki_config_command(raw_args: str) -> str:
 
 
 def handle_wiki_add_command(raw_args: str) -> str:
+    """Handle standalone slash-command add without plugin LLM access."""
     parser = _build_add_parser("/wiki-add")
     try:
         args = parser.parse_args(shlex.split(raw_args))
@@ -700,6 +738,7 @@ def handle_wiki_add_command(raw_args: str) -> str:
 
 
 def make_wiki_add_command_handler(ctx):
+    """Create an async add handler bound to the plugin context LLM."""
     async def handler(raw_args: str) -> str:
         parser = _build_add_parser("/wiki-add")
         try:
@@ -724,6 +763,7 @@ def make_wiki_add_command_handler(ctx):
 
 
 def handle_wiki_deps_command(raw_args: str) -> str:
+    """Handle standalone slash-command dependency inspection."""
     parser = _build_deps_parser("/wiki-deps")
     try:
         args = parser.parse_args(shlex.split(raw_args))
@@ -738,6 +778,7 @@ def handle_wiki_deps_command(raw_args: str) -> str:
 
 
 def make_wiki_deps_command_handler(ctx):
+    """Create a dependency handler that can report plugin LLM availability."""
     def handler(raw_args: str) -> str:
         parser = _build_deps_parser("/wiki-deps")
         try:
@@ -755,6 +796,7 @@ def make_wiki_deps_command_handler(ctx):
 
 
 def setup_wiki_cli(subparser) -> None:
+    """Register hermes wiki subcommands on a provided argparse parser."""
     subcommands = subparser.add_subparsers(dest="wiki_command")
 
     init_parser = subcommands.add_parser("init", help="Initialize a Hermes wiki workspace")
@@ -793,7 +835,9 @@ def setup_wiki_cli(subparser) -> None:
 
 
 def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
+    """Dispatch parsed CLI args to the command implementation functions."""
     try:
+        # Step 1: choose the command branch and preserve plugin LLM access if present.
         if args.wiki_command == "init":
             output = _run_init(
                 args.path,
@@ -836,14 +880,18 @@ def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
             output = "Usage: hermes wiki <init|add|status|list|config|deps>"
     except Exception as exc:
         output = f"Hermes wiki command failed: {exc}"
+
+    # Step 2: command implementations return text; the CLI boundary prints it.
     print(output)
 
 
 def handle_wiki_cli(args) -> None:
+    """Handle the standalone CLI entry point without plugin LLM access."""
     _handle_wiki_cli(args)
 
 
 def make_wiki_cli_handler(ctx):
+    """Create a CLI handler bound to the plugin context."""
     def handler(args) -> None:
         _handle_wiki_cli(args, llm=getattr(ctx, "llm", None))
 

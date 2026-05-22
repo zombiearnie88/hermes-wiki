@@ -708,7 +708,7 @@ def test_compile_pageindex_doc_writes_summary_concepts_and_index(tmp_path: Path,
     assert result.created_concepts == 1
     assert "doc_type: pageindex" in summary_text
     assert "pageindex_id: long" in summary_text
-    assert "full_text: pageindex/long" in summary_text
+    assert "full_text: sources/long.jsonl" in summary_text
     assert "page_count: 30" in summary_text
     assert "[1-10] (0001) Section One: Section summary" in summary_text
     assert "full page text that must not enter the summary" not in summary_text

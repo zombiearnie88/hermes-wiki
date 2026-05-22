@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..workspace import WorkspacePaths
 
-from .store import read_pageindex
+from .store import read_page_source, read_pageindex
 
 
 class PageRangeError(ValueError):
@@ -42,7 +42,8 @@ def parse_page_range(pages: str, *, page_count: int, max_pages: int) -> list[int
 
 
 def get_document_structure(paths: WorkspacePaths, doc_name: str) -> dict:
-    document = read_pageindex(paths, doc_name)
+    """Return PageIndex metadata without loading page-level source content."""
+    document = read_pageindex(paths, doc_name, load_pages=False)
     return {
         "doc_name": document.doc_name,
         "doc_description": document.doc_description,
@@ -52,9 +53,10 @@ def get_document_structure(paths: WorkspacePaths, doc_name: str) -> dict:
 
 
 def get_page_content(paths: WorkspacePaths, doc_name: str, pages: str, *, max_pages: int) -> dict:
-    document = read_pageindex(paths, doc_name)
+    """Return selected PageIndex page content from `wiki/sources/{doc}.jsonl`."""
+    document = read_pageindex(paths, doc_name, load_pages=False)
     selected = parse_page_range(pages, page_count=document.page_count, max_pages=max_pages)
-    page_map = {record.page: record.content for record in document.pages}
+    page_map = {record.page: record.content for record in read_page_source(paths, doc_name)}
     return {
         "doc_name": document.doc_name,
         "page_count": document.page_count,

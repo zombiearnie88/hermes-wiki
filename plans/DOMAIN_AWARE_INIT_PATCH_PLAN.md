@@ -151,7 +151,7 @@ Recommended sections:
 
 ## Summary Frontmatter
 - Short-document summaries use `doc_type: short` and `full_text: sources/{doc_name}.md`.
-- PageIndex summaries use `doc_type: pageindex`, `pageindex_id: {doc_name}`, `full_text: pageindex/{doc_name}`, and `page_count`.
+- PageIndex summaries use `doc_type: pageindex`, `pageindex_id: {doc_name}`, `full_text: sources/{doc_name}.jsonl`, and `page_count`.
 
 ## PageIndex Summary Rules
 - Include a concise model-generated document overview.

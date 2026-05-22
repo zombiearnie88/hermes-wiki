@@ -117,6 +117,8 @@ _SAFE_NAME_RE = re.compile(r"[^\w\-]")
 
 @dataclass
 class CompileResult:
+    """Counts and document brief returned by one wiki compilation run."""
+
     doc_brief: str
     created_concepts: int
     updated_concepts: int
@@ -125,6 +127,8 @@ class CompileResult:
 
 @dataclass(frozen=True)
 class ConceptGenerationTask:
+    """Prepared concept creation or update request from a model plan."""
+
     action: str
     name: str
     safe_name: str
@@ -134,6 +138,8 @@ class ConceptGenerationTask:
 
 @dataclass(frozen=True)
 class ConceptGenerationResult:
+    """Parsed output for one generated concept page."""
+
     task: ConceptGenerationTask
     brief: str
     content: str
@@ -149,6 +155,7 @@ async def _agenerate_conversation(
     conversation_history: list[dict] | None = None,
     purpose: str | None = None,
 ) -> GenerationResult:
+    """Call the runtime generation adapter through a compiler-local seam."""
     return await agenerate_conversation(
         llm,
         model,
@@ -161,6 +168,7 @@ async def _agenerate_conversation(
 
 
 def _parse_json(text: str) -> list | dict:
+    """Repair and parse model output expected to contain JSON."""
     try:
         from json_repair import repair_json
     except ModuleNotFoundError as exc:
@@ -181,10 +189,12 @@ def _parse_json(text: str) -> list | dict:
 
 
 def _clean_frontmatter_value(value: str) -> str:
+    """Collapse free-form model text for safe one-line frontmatter values."""
     return " ".join(value.split())
 
 
 def _read_concept_briefs(wiki_dir: Path) -> str:
+    """Render existing concept slugs and briefs for concept-planning prompts."""
     concepts_dir = wiki_dir / "concepts"
     if not concepts_dir.exists():
         return "(none yet)"
@@ -223,6 +233,7 @@ def _write_summary(
     full_text: str | None = None,
     extra_frontmatter: dict[str, str | int] | None = None,
 ) -> None:
+    """Write a summary page with code-owned frontmatter."""
     if summary.startswith("---"):
         end = summary.find("---", 3)
         if end != -1:
@@ -240,6 +251,7 @@ def _write_summary(
 
 
 def _sanitize_concept_name(name: str) -> str:
+    """Normalize a model-proposed concept name into a safe file slug."""
     name = unicodedata.normalize("NFKC", name)
     sanitized = _SAFE_NAME_RE.sub("-", name).strip("-")
     return sanitized or "unnamed-concept"
@@ -253,6 +265,7 @@ def _write_concept(
     is_update: bool,
     brief: str = "",
 ) -> None:
+    """Create or update a concept page while preserving managed metadata."""
     concepts_dir = wiki_dir / "concepts"
     concepts_dir.mkdir(parents=True, exist_ok=True)
     safe_name = _sanitize_concept_name(name)
@@ -262,6 +275,7 @@ def _write_concept(
 
     brief = _clean_frontmatter_value(brief) if brief else ""
     if is_update and path.exists():
+        # Step 1: ensure the updated concept frontmatter includes this source.
         existing = path.read_text(encoding="utf-8")
         if source_file not in existing:
             if existing.startswith("---"):
@@ -277,6 +291,7 @@ def _write_concept(
             else:
                 existing = f"---\nsources: [{source_file}]\n---\n\n" + existing
 
+        # Step 2: replace the body with the model's full rewritten concept page.
         clean = content
         if clean.startswith("---"):
             end = clean.find("---", 3)
@@ -292,6 +307,7 @@ def _write_concept(
         else:
             existing = clean
 
+        # Step 3: update the concept brief if the model returned one.
         if brief and existing.startswith("---"):
             end = existing.find("---", 3)
             if end != -1:
@@ -305,6 +321,7 @@ def _write_concept(
         path.write_text(existing, encoding="utf-8")
         return
 
+    # Step 4: create new concept pages with fresh code-owned frontmatter.
     if content.startswith("---"):
         end = content.find("---", 3)
         if end != -1:
@@ -317,6 +334,7 @@ def _write_concept(
 
 
 def _read_existing_concept_content(wiki_dir: Path, safe_name: str) -> str:
+    """Return existing concept body text for update prompts."""
     concept_path = wiki_dir / "concepts" / f"{safe_name}.md"
     if not concept_path.exists():
         return "(page not found - create from scratch)"
@@ -334,9 +352,11 @@ def _prepare_concept_generation_tasks(
     create_items: list,
     update_items: list,
 ) -> list[ConceptGenerationTask]:
+    """Normalize model-planned create/update items into generation tasks."""
     tasks: list[ConceptGenerationTask] = []
     seen_slugs: set[str] = set()
 
+    # Step 1: queue valid concept creations, de-duplicated by safe slug.
     for concept in create_items:
         if not isinstance(concept, dict) or "name" not in concept:
             continue
@@ -356,6 +376,7 @@ def _prepare_concept_generation_tasks(
             )
         )
 
+    # Step 2: queue valid updates with the current page body included.
     for concept in update_items:
         if not isinstance(concept, dict) or "name" not in concept:
             continue
@@ -384,6 +405,7 @@ def _prepare_concept_generation_tasks(
 
 
 def _parse_concept_page_response(raw: str) -> tuple[str, str]:
+    """Extract brief and body from a concept-page model response."""
     try:
         parsed_page = _parse_json(raw)
         if isinstance(parsed_page, dict):
@@ -402,6 +424,7 @@ async def _agenerate_concept_task(
     provider: str | None,
     base_history: list[dict],
 ) -> ConceptGenerationResult:
+    """Generate one concept page from a prepared task."""
     result = await _agenerate_conversation(
         llm,
         model,
@@ -424,9 +447,11 @@ async def _agenerate_concept_tasks(
     base_history: list[dict],
     max_concurrency: int,
 ) -> list[ConceptGenerationResult]:
+    """Generate concept pages concurrently with bounded fan-out."""
     if not tasks:
         return []
 
+    # Step 1: bound parallel model calls to the workspace-configured limit.
     max_concurrency = max(1, min(max_concurrency, len(tasks)))
     semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -445,6 +470,8 @@ async def _agenerate_concept_tasks(
         *(run_task(task) for task in tasks),
         return_exceptions=True,
     )
+
+    # Step 2: keep successful concept results while tracking generation errors.
     results: list[ConceptGenerationResult] = []
     errors: list[Exception] = []
     for item in gathered:
@@ -453,6 +480,7 @@ async def _agenerate_concept_tasks(
         else:
             results.append(item)
 
+    # Step 3: preserve fail-closed runtime errors when every task failed identically.
     if not results and errors and len(errors) == len(tasks):
         first = errors[0]
         if isinstance(first, HermesRuntimeError) and all(
@@ -463,6 +491,7 @@ async def _agenerate_concept_tasks(
 
 
 def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | None:
+    """Return the line range belonging to a Markdown level-two section."""
     for index, line in enumerate(lines):
         if line == heading:
             start = index + 1
@@ -476,6 +505,7 @@ def _get_section_bounds(lines: list[str], heading: str) -> tuple[int, int] | Non
 
 
 def _section_contains_link(lines: list[str], heading: str, link: str) -> bool:
+    """Check whether an index section already contains a wikilink entry."""
     bounds = _get_section_bounds(lines, heading)
     if bounds is None:
         return False
@@ -485,6 +515,7 @@ def _section_contains_link(lines: list[str], heading: str, link: str) -> bool:
 
 
 def _replace_section_entry(lines: list[str], heading: str, link: str, entry: str) -> bool:
+    """Replace an existing Markdown list entry inside an index section."""
     bounds = _get_section_bounds(lines, heading)
     if bounds is None:
         return False
@@ -498,6 +529,7 @@ def _replace_section_entry(lines: list[str], heading: str, link: str, entry: str
 
 
 def _insert_section_entry(lines: list[str], heading: str, entry: str) -> bool:
+    """Insert a Markdown list entry at the top of an index section."""
     bounds = _get_section_bounds(lines, heading)
     if bounds is None:
         return False
@@ -507,6 +539,7 @@ def _insert_section_entry(lines: list[str], heading: str, entry: str) -> bool:
 
 
 def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_file: str) -> None:
+    """Attach a lightweight document cross-reference to an existing concept."""
     concepts_dir = wiki_dir / "concepts"
     path = concepts_dir / f"{concept_slug}.md"
     if not path.exists():
@@ -517,6 +550,7 @@ def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_f
     if link in text:
         return
 
+    # Step 1: keep concept source metadata aligned with the related link.
     if source_file not in text:
         if text.startswith("---"):
             end = text.find("---", 3)
@@ -531,11 +565,13 @@ def _add_related_link(wiki_dir: Path, concept_slug: str, doc_name: str, source_f
         else:
             text = f"---\nsources: [{source_file}]\n---\n\n" + text
 
+    # Step 2: append a simple related-document pointer without rewriting content.
     text += f"\n\nSee also: {link}"
     path.write_text(text, encoding="utf-8")
 
 
 def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
+    """Ensure a summary page links back to generated or related concepts."""
     summary_path = wiki_dir / "summaries" / f"{doc_name}.md"
     if not summary_path.exists():
         return
@@ -554,6 +590,7 @@ def _backlink_summary(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -
 
 
 def _backlink_concepts(wiki_dir: Path, doc_name: str, concept_slugs: list[str]) -> None:
+    """Ensure concept pages link back to the current summary page."""
     link = f"[[summaries/{doc_name}]]"
     concepts_dir = wiki_dir / "concepts"
     for slug in concept_slugs:
@@ -579,6 +616,7 @@ def _update_index(
     concept_briefs: dict[str, str] | None = None,
     doc_type: str = "short",
 ) -> None:
+    """Add the compiled document and generated concepts to wiki/index.md."""
     concept_briefs = concept_briefs or {}
     index_path = wiki_dir / "index.md"
     if not index_path.exists():
@@ -588,6 +626,8 @@ def _update_index(
         )
 
     lines = index_path.read_text(encoding="utf-8").split("\n")
+
+    # Step 1: register the document summary once, preserving existing entries.
     doc_link = f"[[summaries/{doc_name}]]"
     if not _section_contains_link(lines, "## Documents", doc_link):
         entry = f"- {doc_link} ({doc_type})"
@@ -595,6 +635,7 @@ def _update_index(
             entry += f" - {_clean_frontmatter_value(doc_brief)}"
         _insert_section_entry(lines, "## Documents", entry)
 
+    # Step 2: upsert concept entries so refreshed briefs stay visible.
     for name in concept_names:
         concept_link = f"[[concepts/{name}]]"
         entry = f"- {concept_link}"
@@ -623,13 +664,17 @@ async def _compile_concepts_from_summary_async(
     doc_type: str,
     concept_generation_concurrency: int,
 ) -> CompileResult:
+    """Plan, generate, write, and index concepts from a summary page."""
     wiki_dir = paths.wiki_dir
+
+    # Step 1: seed concept planning with the exact summary conversation.
     base_history = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": summary_user},
         {"role": "assistant", "content": summary},
     ]
 
+    # Step 2: ask the model which concept pages to create, update, or relate.
     concept_briefs_text = _read_concept_briefs(wiki_dir)
     plan_result = await _agenerate_conversation(
         llm,
@@ -658,6 +703,7 @@ async def _compile_concepts_from_summary_async(
             "related": parsed.get("related", []),
         }
 
+    # Step 3: normalize malformed plan fields into safe empty lists.
     create_items = plan["create"] if isinstance(plan["create"], list) else []
     update_items = plan["update"] if isinstance(plan["update"], list) else []
     related_items = plan["related"] if isinstance(plan["related"], list) else []
@@ -671,6 +717,7 @@ async def _compile_concepts_from_summary_async(
     created_count = 0
     updated_count = 0
 
+    # Step 4: run concept page generation concurrently, but serialize writes.
     concept_tasks = _prepare_concept_generation_tasks(wiki_dir, doc_name, create_items, update_items)
     concept_results = await _agenerate_concept_tasks(
         llm,
@@ -694,6 +741,7 @@ async def _compile_concepts_from_summary_async(
         if concept_result.brief:
             concept_briefs_map[task.safe_name] = concept_result.brief
 
+    # Step 5: apply lightweight related links and bidirectional backlinks.
     sanitized_related = [_sanitize_concept_name(str(item)) for item in related_items]
     for slug in sanitized_related:
         _add_related_link(wiki_dir, slug, doc_name, source_file)
@@ -703,6 +751,7 @@ async def _compile_concepts_from_summary_async(
         _backlink_summary(wiki_dir, doc_name, all_concept_slugs)
         _backlink_concepts(wiki_dir, doc_name, all_concept_slugs)
 
+    # Step 6: refresh the index after all content writes are complete.
     _update_index(
         wiki_dir,
         doc_name,
@@ -729,6 +778,8 @@ async def compile_short_doc_async(
     *,
     language_override: str | None = None,
 ) -> CompileResult:
+    """Compile a short source document into summary and concept pages."""
+    # Step 1: load deterministic workspace settings and source text.
     config = load_config(paths.config_path)
     language = language_override or str(config.get("language", "en"))
     wiki_dir = paths.wiki_dir
@@ -736,6 +787,7 @@ async def compile_short_doc_async(
     content = source_path.read_text(encoding="utf-8")
     system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
 
+    # Step 2: generate the summary page body and brief.
     summary_user = _SUMMARY_USER.format(doc_name=doc_name, content=content)
     summary_result = await _agenerate_conversation(
         llm,
@@ -746,6 +798,8 @@ async def compile_short_doc_async(
         purpose=f"wiki.summary.{doc_name}",
     )
     summary_raw = summary_result.final_response
+
+    # Step 3: tolerate imperfect JSON and still preserve the raw summary text.
     try:
         summary_parsed = _parse_json(summary_raw)
         if isinstance(summary_parsed, dict):
@@ -758,6 +812,8 @@ async def compile_short_doc_async(
         doc_brief = ""
         summary = summary_raw
     _write_summary(wiki_dir, doc_name, summary)
+
+    # Step 4: reuse the summary conversation to plan and write concept pages.
     return await _compile_concepts_from_summary_async(
         llm,
         doc_name,
@@ -782,6 +838,7 @@ def compile_short_doc(
     *,
     language_override: str | None = None,
 ) -> CompileResult:
+    """Reject sync compilation because generation requires Hermes runtime LLM access."""
     del doc_name, source_path, paths, model, provider, language_override
     raise HermesRuntimeError(
         "compile_short_doc requires Hermes plugin LLM access. Use compile_short_doc_async(..., llm=ctx.llm) "
@@ -790,11 +847,13 @@ def compile_short_doc(
 
 
 def _brief_from_description(description: str) -> str:
+    """Trim a PageIndex description into the summary/index brief length."""
     cleaned = _clean_frontmatter_value(description)
     return cleaned[:97].rstrip() + "..." if len(cleaned) > 100 else cleaned
 
 
 def _render_pageindex_summary(doc_name: str, page_count: int, description: str, structure: list[dict]) -> str:
+    """Render the compact long-document summary stored in wiki/summaries/."""
     rendered_tree = render_tree(structure)
     return "\n".join(
         [
@@ -825,12 +884,15 @@ async def compile_pageindex_doc_async(
     *,
     language_override: str | None = None,
 ) -> CompileResult:
+    """Compile a long PDF through PageIndex into wiki summary and concepts."""
+    # Step 1: load workspace compiler settings and schema guidance.
     config = load_config(paths.config_path)
     language = language_override or str(config.get("language", "en"))
     wiki_dir = paths.wiki_dir
     schema_md = get_schema_md(wiki_dir)
     system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
 
+    # Step 2: build or load PageIndex state and render a compact summary.
     pageindex = await build_or_load_pageindex_async(llm, doc_name, raw_path, paths, model, provider, language=language)
     summary = _render_pageindex_summary(
         doc_name,
@@ -839,14 +901,18 @@ async def compile_pageindex_doc_async(
         pageindex.structure,
     )
     doc_brief = _brief_from_description(pageindex.doc_description)
+
+    # Step 3: write a pageindex summary that points full_text to source JSONL.
     _write_summary(
         wiki_dir,
         doc_name,
         summary,
         "pageindex",
-        full_text=f"pageindex/{doc_name}",
+        full_text=f"sources/{doc_name}.jsonl",
         extra_frontmatter={"pageindex_id": doc_name, "page_count": pageindex.page_count},
     )
+
+    # Step 4: use the PageIndex summary as concept-generation context.
     summary_user = _PAGEINDEX_SUMMARY_USER.format(
         doc_name=doc_name,
         page_count=pageindex.page_count,
@@ -876,6 +942,7 @@ def compile_pageindex_doc(
     *,
     language_override: str | None = None,
 ) -> CompileResult:
+    """Reject sync PageIndex compilation because Hermes LLM access is async-only."""
     del doc_name, raw_path, paths, model, provider, language_override
     raise HermesRuntimeError(
         "compile_pageindex_doc requires Hermes plugin LLM access. Use compile_pageindex_doc_async(..., llm=ctx.llm) "
