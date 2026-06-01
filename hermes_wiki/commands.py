@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import shlex
 import subprocess
 import threading
@@ -22,6 +23,13 @@ from .deps import (
     runtime_python_path,
 )
 from .log import append_log
+from .pageindex.config import load_pageindex_config
+from .pageindex.retrieve import (
+    PageRangeError,
+    get_document_structure as get_pageindex_structure,
+    get_page_content as get_pageindex_content,
+)
+from .pageindex.tree import render_tree
 from .state import HashRegistry
 from .workspace import find_workspace, init_workspace, read_workspace_status, workspace_paths
 
@@ -118,7 +126,13 @@ def is_failure_output(text: str) -> bool:
         "Unsupported file type:",
         "ERROR ",
     )
-    return text.startswith(failure_prefixes)
+    if text.startswith(failure_prefixes):
+        return True
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("ok") is False
 
 
 def _dependency_repair_lines(*, include_group_commands: bool = False) -> list[str]:
@@ -431,6 +445,132 @@ def _run_config(
     return "\n".join(lines)
 
 
+def _pageindex_json_payload(*, ok: bool, action: str, **extra) -> str:
+    """Serialize PageIndex retrieval output for CLI automation."""
+    payload = {"ok": ok, "action": action}
+    payload.update({key: value for key, value in extra.items() if value is not None})
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def _run_get_document_structure(workspace_override: str | None, doc_name: str, *, as_json: bool = False) -> str:
+    """Load PageIndex structure through the workspace-facing retrieval API."""
+    action = "get_document_structure"
+    workspace_root, error = _resolve_workspace(workspace_override)
+    if error:
+        return _pageindex_json_payload(
+            ok=False,
+            action=action,
+            error=error,
+            workspace=workspace_override,
+            doc_name=doc_name,
+        ) if as_json else error
+
+    paths = workspace_paths(workspace_root)
+    try:
+        payload = get_pageindex_structure(paths, doc_name)
+    except FileNotFoundError as exc:
+        error = f"ERROR {exc}"
+        return _pageindex_json_payload(
+            ok=False,
+            action=action,
+            error=str(exc),
+            workspace=str(paths.root),
+            doc_name=doc_name,
+        ) if as_json else error
+    except Exception as exc:
+        error = f"ERROR {exc}"
+        return _pageindex_json_payload(
+            ok=False,
+            action=action,
+            error=str(exc),
+            workspace=str(paths.root),
+            doc_name=doc_name,
+        ) if as_json else error
+
+    if as_json:
+        return _pageindex_json_payload(ok=True, action=action, workspace=str(paths.root), **payload)
+
+    lines = [
+        f"Workspace: {paths.root}",
+        f"Document: {payload['doc_name']}",
+        f"Page count: {payload['page_count']}",
+    ]
+    if payload["doc_description"]:
+        lines.extend([f"Description: {payload['doc_description']}"])
+    lines.extend(["Structure:", render_tree(payload["structure"]) or "- none"])
+    return "\n".join(lines)
+
+
+def _run_get_page_content(
+    workspace_override: str | None,
+    doc_name: str,
+    pages: str,
+    *,
+    as_json: bool = False,
+) -> str:
+    """Load selected PageIndex page text with workspace guardrails applied."""
+    action = "get_page_content"
+    workspace_root, error = _resolve_workspace(workspace_override)
+    if error:
+        return _pageindex_json_payload(
+            ok=False,
+            action=action,
+            error=error,
+            workspace=workspace_override,
+            doc_name=doc_name,
+            page_selector=pages,
+        ) if as_json else error
+
+    paths = workspace_paths(workspace_root)
+    try:
+        config = load_pageindex_config(paths.config_path)
+        payload = get_pageindex_content(paths, doc_name, pages, max_pages=config.max_pages_per_tool_call)
+    except (FileNotFoundError, PageRangeError) as exc:
+        error = f"ERROR {exc}"
+        return _pageindex_json_payload(
+            ok=False,
+            action=action,
+            error=str(exc),
+            workspace=str(paths.root),
+            doc_name=doc_name,
+            page_selector=pages,
+        ) if as_json else error
+    except Exception as exc:
+        error = f"ERROR {exc}"
+        return _pageindex_json_payload(
+            ok=False,
+            action=action,
+            error=str(exc),
+            workspace=str(paths.root),
+            doc_name=doc_name,
+            page_selector=pages,
+        ) if as_json else error
+
+    if as_json:
+        return _pageindex_json_payload(
+            ok=True,
+            action=action,
+            workspace=str(paths.root),
+            page_selector=pages,
+            **payload,
+        )
+
+    lines = [
+        f"Workspace: {paths.root}",
+        f"Document: {payload['doc_name']}",
+        f"Selection: {pages}",
+        f"Page count: {payload['page_count']}",
+        "Pages:",
+    ]
+    for page in payload["pages"]:
+        lines.append(f"[Page {page['page']}]")
+        lines.append(page["content"] or "(empty)")
+        lines.append("")
+    if lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines)
+
+
 def _run_add(
     target_path: str,
     workspace_override: str | None,
@@ -626,6 +766,27 @@ def _build_deps_parser(prog: str) -> argparse.ArgumentParser:
     """Build the parser shared by wiki deps command surfaces."""
     parser = argparse.ArgumentParser(prog=prog, add_help=False)
     parser.add_argument("--install", choices=install_groups(), default=None)
+    parser.add_argument("-h", "--help", action="store_true")
+    return parser
+
+
+def _build_get_document_structure_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by PageIndex structure command surfaces."""
+    parser = argparse.ArgumentParser(prog=prog, add_help=False)
+    parser.add_argument("--workspace", default=None)
+    parser.add_argument("--doc-name", required=True)
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("-h", "--help", action="store_true")
+    return parser
+
+
+def _build_get_page_content_parser(prog: str) -> argparse.ArgumentParser:
+    """Build the parser shared by PageIndex content command surfaces."""
+    parser = argparse.ArgumentParser(prog=prog, add_help=False)
+    parser.add_argument("--workspace", default=None)
+    parser.add_argument("--doc-name", required=True)
+    parser.add_argument("--pages", required=True)
+    parser.add_argument("--json", action="store_true")
     parser.add_argument("-h", "--help", action="store_true")
     return parser
 
@@ -831,6 +992,23 @@ def setup_wiki_cli(subparser) -> None:
     deps_parser = subcommands.add_parser("deps", help="Inspect or install Hermes wiki runtime dependencies")
     deps_parser.add_argument("--install", choices=install_groups(), default=None)
 
+    structure_parser = subcommands.add_parser(
+        "get-document-structure",
+        help="Show PageIndex structure for a long document",
+    )
+    structure_parser.add_argument("--workspace", default=None)
+    structure_parser.add_argument("--doc-name", required=True)
+    structure_parser.add_argument("--json", action="store_true")
+
+    content_parser = subcommands.add_parser(
+        "get-page-content",
+        help="Show selected PageIndex page content for a long document",
+    )
+    content_parser.add_argument("--workspace", default=None)
+    content_parser.add_argument("--doc-name", required=True)
+    content_parser.add_argument("--pages", required=True)
+    content_parser.add_argument("--json", action="store_true")
+
     subparser.set_defaults(func=handle_wiki_cli)
 
 
@@ -876,8 +1054,12 @@ def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
             )
         elif args.wiki_command == "deps":
             output = _run_deps(args.install, plugin_llm_available=llm is not None)
+        elif args.wiki_command == "get-document-structure":
+            output = _run_get_document_structure(args.workspace, args.doc_name, as_json=args.json)
+        elif args.wiki_command == "get-page-content":
+            output = _run_get_page_content(args.workspace, args.doc_name, args.pages, as_json=args.json)
         else:
-            output = "Usage: hermes wiki <init|add|status|list|config|deps>"
+            output = "Usage: hermes wiki <init|add|status|list|config|deps|get-document-structure|get-page-content>"
     except Exception as exc:
         output = f"Hermes wiki command failed: {exc}"
 

@@ -109,11 +109,14 @@ def build_agents_md() -> str:
 4. When you need detailed source document content, each summary page has a
    `full_text` frontmatter field with the path to the original document content:
    - Short documents (doc_type: short): read_file with that path.
-   - PageIndex documents (doc_type: pageindex): use get_page_content(doc_name, pages)
-     with tight page ranges. The source JSONL in full_text stores page-level text
-     and image references. Never fetch the whole document.
+   - PageIndex documents (doc_type: pageindex): inspect the document structure
+     first, then fetch only the specific page ranges you need. In environments
+     that expose Hermes Wiki retrieval tools, use get_document_structure(doc_name)
+     followed by get_page_content(doc_name, pages). The source JSONL in
+     full_text stores page-level text and image references. Never fetch the
+     whole document.
 5. Source content may reference images (e.g. ![image](sources/images/doc/file.png)).
-    Use an image-viewing tool only if the current Hermes runtime registered one.
+    If the current agent environment exposes an image-viewing tool, use it when needed.
 6. Synthesize a clear, concise, well-cited answer grounded in wiki content.
 
 ## Answering

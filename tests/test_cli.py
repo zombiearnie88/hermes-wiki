@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import hermes_wiki.cli as cli
+from hermes_wiki.pageindex.store import write_pageindex
+from hermes_wiki.pageindex.types import PageIndexBuildResult
+from hermes_wiki.pageindex.types import PageRecord
+from hermes_wiki.workspace import workspace_paths
 
 
 def test_run_args_init_and_status(tmp_path: Path) -> None:
@@ -149,3 +154,86 @@ def test_run_args_deps_passes_install_group(monkeypatch) -> None:
 
     assert output == "ok"
     assert captured["install"] == "office"
+
+
+def test_run_args_pageindex_retrieval_commands(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    parser = cli.build_parser()
+
+    cli.run_args(parser.parse_args(["init", str(workspace)]))
+    write_pageindex(
+        workspace_paths(workspace),
+        PageIndexBuildResult(
+            doc_name="paper",
+            page_count=3,
+            doc_description="Overview",
+            structure=[
+                {
+                    "title": "Intro",
+                    "node_id": "0001",
+                    "start_index": 1,
+                    "end_index": 3,
+                    "summary": "Intro summary",
+                }
+            ],
+            pages=[
+                PageRecord(page=1, content="page one"),
+                PageRecord(page=2, content="page two"),
+                PageRecord(page=3, content="page three"),
+            ],
+        ),
+    )
+
+    structure_output = cli.run_args(
+        parser.parse_args(["get-document-structure", "--workspace", str(workspace), "--doc-name", "paper"])
+    )
+    content_output = cli.run_args(
+        parser.parse_args(["get-page-content", "--workspace", str(workspace), "--doc-name", "paper", "--pages", "2-3"])
+    )
+    content_json = json.loads(
+        cli.run_args(
+            parser.parse_args(
+                [
+                    "get-page-content",
+                    "--workspace",
+                    str(workspace),
+                    "--doc-name",
+                    "paper",
+                    "--pages",
+                    "2-3",
+                    "--json",
+                ]
+            )
+        )
+    )
+
+    assert "Structure:" in structure_output
+    assert "Intro summary" in structure_output
+    assert "[Page 2]" in content_output
+    assert content_json["ok"] is True
+    assert content_json["pages"][0] == {"page": 2, "content": "page two"}
+
+
+def test_main_returns_nonzero_for_json_pageindex_error(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "workspace"
+
+    cli.main(["init", str(workspace)])
+    capsys.readouterr()
+    exit_code = cli.main(
+        [
+            "get-page-content",
+            "--workspace",
+            str(workspace),
+            "--doc-name",
+            "missing",
+            "--pages",
+            "1",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["action"] == "get_page_content"

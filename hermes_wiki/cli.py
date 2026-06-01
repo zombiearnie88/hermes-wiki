@@ -3,7 +3,17 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .commands import _run_add, _run_deps, _run_init, _run_status, is_failure_output
+from .commands import (
+    _run_add,
+    _run_config,
+    _run_deps,
+    _run_get_document_structure,
+    _run_get_page_content,
+    _run_init,
+    _run_list,
+    _run_status,
+    is_failure_output,
+)
 from .config import DEFAULT_CONFIG
 
 
@@ -43,6 +53,23 @@ def build_parser() -> argparse.ArgumentParser:
     deps_parser = subcommands.add_parser("deps", help="Inspect or install Hermes wiki runtime dependencies")
     deps_parser.add_argument("--install", choices=["core", "pdf", "office", "all"], default=None)
 
+    structure_parser = subcommands.add_parser(
+        "get-document-structure",
+        help="Show PageIndex structure for a long document",
+    )
+    structure_parser.add_argument("--workspace", default=None)
+    structure_parser.add_argument("--doc-name", required=True)
+    structure_parser.add_argument("--json", action="store_true")
+
+    content_parser = subcommands.add_parser(
+        "get-page-content",
+        help="Show selected PageIndex page content for a long document",
+    )
+    content_parser.add_argument("--workspace", default=None)
+    content_parser.add_argument("--doc-name", required=True)
+    content_parser.add_argument("--pages", required=True)
+    content_parser.add_argument("--json", action="store_true")
+
     return parser
 
 
@@ -61,12 +88,8 @@ def run_args(args: argparse.Namespace) -> str:
     if args.command == "status":
         return _run_status(args.workspace)
     if args.command == "list":
-        from .commands import _run_list
-
         return _run_list(args.workspace)
     if args.command == "config":
-        from .commands import _run_config
-
         return _run_config(
             args.workspace,
             model=args.model,
@@ -77,7 +100,11 @@ def run_args(args: argparse.Namespace) -> str:
         )
     if args.command == "deps":
         return _run_deps(args.install)
-    return "Usage: hermes-wiki <init|add|status|list|config|deps>"
+    if args.command == "get-document-structure":
+        return _run_get_document_structure(args.workspace, args.doc_name, as_json=args.json)
+    if args.command == "get-page-content":
+        return _run_get_page_content(args.workspace, args.doc_name, args.pages, as_json=args.json)
+    return "Usage: hermes-wiki <init|add|status|list|config|deps|get-document-structure|get-page-content>"
 
 
 def main(argv: list[str] | None = None) -> int:

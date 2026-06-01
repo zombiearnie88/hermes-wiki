@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from hermes_wiki import commands
@@ -9,6 +10,9 @@ from hermes_wiki.converter import ConvertResult
 from hermes_wiki.deps import CapabilityStatus
 from hermes_wiki.deps import DependencyInstallResult
 from hermes_wiki.deps import DependencyStatus
+from hermes_wiki.pageindex.store import write_pageindex
+from hermes_wiki.pageindex.types import PageIndexBuildResult
+from hermes_wiki.pageindex.types import PageRecord
 
 
 async def _stub_compile(llm, doc_name, source_path, paths, model, provider=None, *, language_override=None):
@@ -500,6 +504,90 @@ def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> No
     assert captured["raw_path"] == raw_path
     assert captured["provider"] == "test-provider"
     assert "- long (pageindex) <- long.pdf" in list_output
+
+
+def test_run_pageindex_retrieval_commands_support_text_and_json(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    commands._run_init(str(workspace), "test/model", "en", 20)
+    paths = commands.workspace_paths(workspace)
+    write_pageindex(
+        paths,
+        PageIndexBuildResult(
+            doc_name="paper",
+            page_count=3,
+            doc_description="Overview",
+            structure=[
+                {
+                    "title": "Intro",
+                    "node_id": "0001",
+                    "start_index": 1,
+                    "end_index": 2,
+                    "summary": "Intro summary",
+                },
+                {
+                    "title": "Results",
+                    "node_id": "0002",
+                    "start_index": 3,
+                    "end_index": 3,
+                    "summary": "Results summary",
+                },
+            ],
+            pages=[
+                PageRecord(page=1, content="page one"),
+                PageRecord(page=2, content="page two"),
+                PageRecord(page=3, content="page three"),
+            ],
+        ),
+    )
+
+    structure_output = commands._run_get_document_structure(str(workspace), "paper")
+    structure_json = json.loads(commands._run_get_document_structure(str(workspace), "paper", as_json=True))
+    content_output = commands._run_get_page_content(str(workspace), "paper", "1,3")
+    content_json = json.loads(commands._run_get_page_content(str(workspace), "paper", "1,3", as_json=True))
+
+    assert "Document: paper" in structure_output
+    assert "Description: Overview" in structure_output
+    assert "- [1-2] (0001) Intro: Intro summary" in structure_output
+    assert structure_json["ok"] is True
+    assert structure_json["doc_name"] == "paper"
+    assert structure_json["structure"][1]["title"] == "Results"
+
+    assert "Selection: 1,3" in content_output
+    assert "[Page 1]" in content_output
+    assert "page three" in content_output
+    assert content_json["ok"] is True
+    assert content_json["page_selector"] == "1,3"
+    assert content_json["pages"] == [
+        {"page": 1, "content": "page one"},
+        {"page": 3, "content": "page three"},
+    ]
+
+
+def test_run_pageindex_retrieval_commands_report_json_errors(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    commands._run_init(str(workspace), "test/model", "en", 20)
+    paths = commands.workspace_paths(workspace)
+    write_pageindex(
+        paths,
+        PageIndexBuildResult(
+            doc_name="paper",
+            page_count=3,
+            doc_description="Overview",
+            structure=[],
+            pages=[PageRecord(page=1, content="page one")],
+        ),
+    )
+
+    missing_payload = json.loads(commands._run_get_document_structure(str(workspace), "missing", as_json=True))
+    invalid_payload = json.loads(commands._run_get_page_content(str(workspace), "paper", "9", as_json=True))
+
+    assert missing_payload["ok"] is False
+    assert missing_payload["action"] == "get_document_structure"
+    assert "PageIndex document not found" in missing_payload["error"]
+    assert invalid_payload["ok"] is False
+    assert invalid_payload["action"] == "get_page_content"
+    assert invalid_payload["page_selector"] == "9"
+    assert "Page selection must be within 1-3" in invalid_payload["error"]
 
 
 def test_failed_pageindex_build_does_not_register_hash(tmp_path: Path, monkeypatch) -> None:

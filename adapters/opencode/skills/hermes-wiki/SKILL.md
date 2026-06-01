@@ -1,19 +1,19 @@
 ---
 name: hermes-wiki
-description: Hermes wiki, hermes wiki, wiki init, wiki add, wiki status, get-document-structure, get-page-content. Use ONLY when the user wants Codex to operate a locally installed Hermes Wiki runtime through `hermes wiki ...` commands.
+description: Hermes wiki, hermes wiki, wiki init, wiki add, wiki status, get-document-structure, get-page-content. Use ONLY when the user wants OpenCode to operate a locally installed Hermes Wiki runtime through `hermes wiki ...` commands.
 ---
 
 # Hermes Wiki Operator
 
 Use this skill when the user wants to initialize, inspect, configure, or ingest a Hermes Wiki workspace through a locally installed Hermes runtime.
 
-This skill is an operator wrapper around Hermes CLI commands. Do not re-implement wiki generation in Codex.
+This skill is an operator wrapper around Hermes CLI commands. Do not re-implement wiki generation in OpenCode.
 
 ## Use Only When
 
 - the user wants to work with a Hermes Wiki workspace
 - the user mentions `hermes wiki`, `wiki init`, `wiki add`, `wiki status`, `wiki list`, `wiki config`, `get-document-structure`, or `get-page-content`
-- the user wants Codex to drive an already installed local Hermes Wiki setup
+- the user wants OpenCode to drive an already installed local Hermes Wiki setup
 - the user wants documents ingested into the existing Hermes Wiki workflow
 
 Do not use this skill for general markdown editing, generic note-taking, or building a separate non-Hermes wiki system.
@@ -39,7 +39,7 @@ Do not use standalone `hermes-wiki add`. It cannot generate summaries or concept
 
 - keep Hermes Wiki as the single source of truth
 - reuse the existing workspace layout and generation flow
-- avoid re-implementing summary or concept generation in Codex
+- avoid re-implementing summary or concept generation in OpenCode
 - surface Hermes errors clearly and act as a reliable operator
 
 ## Workspace Expectations
@@ -64,10 +64,9 @@ If the workspace already exists, reuse it. Do not reinitialize unless the user e
 3. Read the capability and dependency output before attempting ingest.
 4. If the workspace does not exist and the user wants one, initialize it with a specific domain.
 5. If model or provider settings are missing or wrong, update them with `hermes wiki config` before ingest.
-6. Before `hermes wiki add`, ask the user for permission to allow internet access because ingest and generation may need network access through the Hermes runtime.
-7. Use `hermes wiki add` for actual ingest and generation only after the user approves internet access.
-8. Use `hermes wiki list` and `hermes wiki status` to verify results.
-9. Report Hermes output clearly, especially for blocked capabilities, skipped files, dependency problems, and unsupported long-doc cases.
+6. Use `hermes wiki add` for actual ingest and generation.
+7. Use `hermes wiki list` and `hermes wiki status` to verify results.
+8. Report Hermes output clearly, especially for blocked capabilities, skipped files, dependency problems, and unsupported long-doc cases.
 
 ## Initialization Rules
 
@@ -116,7 +115,6 @@ Before ingest:
 - check status if the environment may be misconfigured
 - make sure required dependencies are available
 - make sure the model and provider configuration matches the intended runtime
-- ask the user for internet access permission before running `hermes wiki add`
 
 Do not manually create summary pages or concept pages unless the user explicitly asks for manual edits.
 
@@ -182,7 +180,7 @@ If Hermes is not installed, the plugin is unavailable, or the command fails:
 - report the exact blocking condition
 - suggest the smallest next step
 - do not pretend the wiki was updated
-- do not bypass Hermes by generating wiki content directly in Codex
+- do not bypass Hermes by generating wiki content directly in OpenCode
 
 ## Response Style
 
