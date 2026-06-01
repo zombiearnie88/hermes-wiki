@@ -4,7 +4,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import load_config
+from .config import DEFAULT_CONFIG, load_config
 from .images import copy_relative_images, convert_pdf_with_images, extract_base64_images, load_pymupdf
 from .state import HashRegistry
 from .workspace import WorkspacePaths
@@ -93,7 +93,7 @@ def get_pdf_page_count(path: Path) -> int:
 
 def convert_document(src: Path, paths: WorkspacePaths) -> ConvertResult:
     config = load_config(paths.config_path)
-    long_doc_threshold = int(config.get("long_doc_threshold", 20))
+    long_doc_threshold = int(config.get("long_doc_threshold", DEFAULT_CONFIG["long_doc_threshold"]))
     registry = HashRegistry(paths.hashes_path)
 
     file_hash = HashRegistry.hash_file(src)

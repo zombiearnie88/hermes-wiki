@@ -10,13 +10,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "model": "gpt-5.4-mini",
     "provider": "openai-codex",
     "language": "en",
-    "long_doc_threshold": 20,
+    "long_doc_threshold": 10,
     "concept_generation_concurrency": CONCEPT_GENERATION_CONCURRENCY_DEFAULT,
     "pageindex_toc_check_pages": 20,
-    "pageindex_max_pages_per_node": 10,
+    "pageindex_max_pages_per_node": 5,
     "pageindex_max_tokens_per_node": 20000,
     "pageindex_summary_token_threshold": 200,
-    "pageindex_max_pages_per_tool_call": 8,
+    "pageindex_max_pages_per_tool_call": 5,
 }
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hermes_wiki.config import CONCEPT_GENERATION_CONCURRENCY_MAX, DEFAULT_CONFIG, load_config, save_config
+from hermes_wiki.pageindex.config import load_pageindex_config
 
 
 def test_config_round_trip_preserves_basic_values(tmp_path: Path) -> None:
@@ -39,7 +40,19 @@ def test_load_config_ignores_comments_and_unknown_lines(tmp_path: Path) -> None:
     assert loaded["model"] == "custom/model"
     assert loaded["provider"] == "openai-codex"
     assert loaded["language"] == "es"
-    assert loaded["long_doc_threshold"] == 20
+    assert loaded["long_doc_threshold"] == 10
+
+
+def test_default_config_includes_pageindex_limits(tmp_path: Path) -> None:
+    loaded = load_config(tmp_path / "missing.yaml")
+    pageindex = load_pageindex_config(tmp_path / "missing.yaml")
+
+    assert DEFAULT_CONFIG["long_doc_threshold"] == 10
+    assert loaded["long_doc_threshold"] == 10
+    assert DEFAULT_CONFIG["pageindex_max_pages_per_node"] == 5
+    assert pageindex.max_pages_per_node == 5
+    assert DEFAULT_CONFIG["pageindex_max_pages_per_tool_call"] == 5
+    assert pageindex.max_pages_per_tool_call == 5
 
 
 def test_default_config_includes_concept_generation_concurrency(tmp_path: Path) -> None:

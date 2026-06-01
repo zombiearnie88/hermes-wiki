@@ -236,13 +236,13 @@ For the repo-local Docker ChatGPT/Codex setup, configure generation with unprefi
 model: gpt-5.4-mini
 provider: openai-codex
 language: en
-long_doc_threshold: 20
+long_doc_threshold: 10
 concept_generation_concurrency: 3
 pageindex_toc_check_pages: 20
-pageindex_max_pages_per_node: 10
+pageindex_max_pages_per_node: 5
 pageindex_max_tokens_per_node: 20000
 pageindex_summary_token_threshold: 200
-pageindex_max_pages_per_tool_call: 8
+pageindex_max_pages_per_tool_call: 5
 ```
 
 Do not use `openai/gpt-*` model IDs with `provider: openai-codex`; the Codex ChatGPT backend expects model IDs such as `gpt-5.4-mini`, `gpt-5.5`, or `gpt-5.5-mini`.
