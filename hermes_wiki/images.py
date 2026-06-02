@@ -33,7 +33,10 @@ def _save_pdf_pixmap_image(
     image_counter: int,
 ) -> tuple[str, int]:
     """Save a PyMuPDF pixmap as PNG and return its wiki Markdown reference."""
-    if pix.n > 4:
+    colorspace_channels = getattr(getattr(pix, "colorspace", None), "n", 0)
+    # Some PDF JPEGs are 4-channel CMYK without alpha; PyMuPDF can decode them
+    # but cannot encode them directly as PNG until we convert them to RGB.
+    if pix.n > 4 or colorspace_channels == 4:
         pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
     image_counter += 1
     filename = f"p{page_num}_img{image_counter}.png"
