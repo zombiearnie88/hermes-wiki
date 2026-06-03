@@ -34,7 +34,7 @@ def build_schema_md(domain: str | None = None) -> str:
 - wiki/sources/ - Document content for ingested files, including PageIndex page JSONL. Do not edit directly unless repairing conversion output.
 - wiki/sources/images/ - Extracted or copied images referenced by source markdown.
 - wiki/summaries/ - One summary page per source document.
-- wiki/concepts/ - Cross-document concept pages synthesized over time.
+- wiki/concepts/ - Cross-document topic synthesis. Created when a theme spans multiple documents.
 - wiki/explorations/ - Saved analyses and ad hoc writeups worth keeping.
 - wiki/reports/ - Generated reports and maintenance output.
 - .hermeskb/ - Workspace config, hash registry, and runtime indexes. Do not edit unless repairing state.
@@ -46,7 +46,7 @@ def build_schema_md(domain: str | None = None) -> str:
 ## Page Types
 - Summary pages describe one source document.
 - PageIndex summary pages describe one long document and point detailed retrieval to PageIndex tools.
-- Concept pages synthesize ideas across multiple documents.
+- Concept pages synthesize a topic across multiple documents.
 - Index page lists pages with short descriptions.
 - Log page records operations chronologically.
 
@@ -68,12 +68,6 @@ def build_schema_md(domain: str | None = None) -> str:
 - Ground summaries and concepts in the source material.
 - Avoid creating broad generic concept pages unless they are central to {domain_reference}.
 
-## Page Thresholds
-- Create a concept page when a concept appears in 2+ sources or is central to one important source.
-- Update an existing concept page when a new source adds meaningful information.
-- Do not create concept pages for passing mentions or minor details.
-- Split long concept pages when they become hard to scan.
-
 ## Summary Pages
 Each summary page should include:
 - What the source is about.
@@ -83,11 +77,12 @@ Each summary page should include:
 
 ## Concept Pages
 Each concept page should include:
-- Definition or explanation.
+- A concise definition of the topic.
+- Cross-document synthesis of how multiple sources describe, support, refine, or disagree about it.
 - Why it matters for {domain_reference}.
-- Current state of knowledge.
-- Open questions, debates, or limitations.
+- Current knowledge, major limitations, or open questions.
 - Related summaries and concepts using [[wikilinks]].
+- Do not use a concept page as a second summary of a single document.
 
 """
 
