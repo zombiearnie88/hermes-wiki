@@ -83,7 +83,7 @@ def test_repo_root_is_directory_plugin_wrapper() -> None:
     plugin_yaml = (ROOT / "plugin.yaml").read_text(encoding="utf-8")
 
     assert "name: hermes-wiki" in plugin_yaml
-    assert "version: 0.1.9" in plugin_yaml
+    assert "version: 0.2.0" in plugin_yaml
     assert "provides_tools:" in plugin_yaml
     assert (ROOT / "__init__.py").exists()
     assert (ROOT / "requirements.txt").exists()
