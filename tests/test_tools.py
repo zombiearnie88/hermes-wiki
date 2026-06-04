@@ -70,6 +70,7 @@ def test_wiki_add_uses_workspace_config_without_model(monkeypatch) -> None:
         provider: str | None,
         *,
         llm,
+        progress=None,
     ) -> str:
         captured["llm"] = llm
         captured["path"] = path
@@ -106,6 +107,7 @@ def test_wiki_add_passes_overrides(monkeypatch) -> None:
         provider: str | None,
         *,
         llm,
+        progress=None,
     ) -> str:
         captured["llm"] = llm
         captured["path"] = path

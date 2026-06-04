@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from typing import Any
 
 from ..images import extract_pdf_page_markdown, load_pymupdf
@@ -129,9 +130,12 @@ async def build_pageindex_async(
     provider: str | None,
     *,
     language: str,
+    progress: Callable[[str], None] | None = None,
 ) -> PageIndexBuildResult:
     """Build PageIndex state from a long PDF and return persisted payload data."""
     config = load_pageindex_config(paths.config_path)
+    if progress is not None:
+        progress("  Extracting PDF pages...")
     extraction = extract_pdf_pages_and_toc(raw_path, doc_name, paths)
     pages = extraction.pages
     toc = extraction.toc
@@ -142,13 +146,20 @@ async def build_pageindex_async(
         raise RuntimeError("PageIndex build failed: PDF has no extractable text. OCR is not supported yet.")
 
     # Step 1: derive a navigable document structure from the PDF TOC or page chunks.
+    if progress is not None:
+        progress("  Building PageIndex structure...")
     structure, structure_source = _build_initial_structure(pages, toc, config)
 
     # Step 2: summarize each PageIndex node using only the relevant page range.
-    for node in flatten_nodes(structure):
+    nodes = flatten_nodes(structure)
+    if progress is not None:
+        progress(f"  Summarizing PageIndex nodes: {len(nodes)} node(s)...")
+    for node in nodes:
         node["summary"] = await _summary_for_node_async(llm, node, pages, model, provider, language, config)
 
     # Step 3: summarize the full structure for the wiki summary page.
+    if progress is not None:
+        progress("  Generating PageIndex document description...")
     rendered_tree = render_tree(structure)
     doc_description = await pageindex_generate_text_async(
         llm,
@@ -188,14 +199,27 @@ async def build_or_load_pageindex_async(
     provider: str | None,
     *,
     language: str,
+    progress: Callable[[str], None] | None = None,
 ) -> PageIndexBuildResult:
     """Load existing PageIndex state or build and persist it on first ingest."""
     try:
         document = read_pageindex(paths, doc_name)
     except FileNotFoundError:
-        result = await build_pageindex_async(llm, doc_name, raw_path, paths, model, provider, language=language)
+        result = await build_pageindex_async(
+            llm,
+            doc_name,
+            raw_path,
+            paths,
+            model,
+            provider,
+            language=language,
+            progress=progress,
+        )
         write_pageindex(paths, result)
         return result
+
+    if progress is not None:
+        progress("  Reusing existing PageIndex state...")
 
     return PageIndexBuildResult(
         doc_name=document.doc_name,

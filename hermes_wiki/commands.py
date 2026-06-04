@@ -8,6 +8,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Any
+from typing import Callable
 
 from .compiler import compile_pageindex_doc_async, compile_short_doc_async
 from .config import DEFAULT_CONFIG, load_config, normalize_concept_generation_concurrency, save_config
@@ -591,10 +592,18 @@ async def _run_add_async(
     provider_override: str | None = None,
     *,
     llm: Any,
+    progress: Callable[[str], None] | None = None,
 ) -> str:
     """Add files through Hermes plugin LLM access and compile wiki content."""
     if llm is None:
         return _standalone_generation_unavailable()
+
+    transcript: list[str] = []
+
+    def emit(line: str) -> None:
+        transcript.append(line)
+        if progress is not None:
+            progress(line)
 
     # Step 1: resolve workspace, settings, and target paths before touching files.
     workspace_root, error = _resolve_workspace(workspace_override)
@@ -614,6 +623,7 @@ async def _run_add_async(
         files = _collect_supported_files(target)
         if not files:
             return f"No supported files found in {target}"
+        emit(f"Found {len(files)} supported file(s) in {target}.")
     else:
         if target.suffix.lower() not in SUPPORTED_EXTENSIONS:
             supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
@@ -625,23 +635,30 @@ async def _run_add_async(
     if dependency_error:
         return dependency_error
 
-    lines: list[str] = []
     registry = HashRegistry(paths.hashes_path)
-    for file_path in files:
+    total_files = len(files)
+    for index, file_path in enumerate(files, 1):
         try:
+            if total_files > 1:
+                emit(f"[{index}/{total_files}] Adding: {file_path.name}")
+            else:
+                emit(f"Adding: {file_path.name}")
+
             # Step 3: convert or route each file before invoking the compiler.
+            emit("  Converting...")
             convert_result = convert_document(file_path, paths)
             if convert_result.skipped:
-                lines.append(f"SKIP {file_path.name}: already in workspace")
+                emit(f"  [SKIP] Already in workspace: {file_path.name}")
                 continue
 
             if convert_result.unsupported_long_doc:
                 if convert_result.raw_path is None or convert_result.file_hash is None:
-                    lines.append(f"ERROR {file_path.name}: conversion did not produce a raw PDF")
+                    emit(f"  [ERROR] Conversion failed: did not produce a raw PDF for {file_path.name}")
                     continue
                 doc_name = convert_result.doc_name or file_path.stem
 
                 # Step 4a: compile supported long PDFs through PageIndex.
+                emit("  Long document detected - indexing with PageIndex...")
                 compile_result = await compile_pageindex_doc_async(
                     llm,
                     doc_name,
@@ -650,6 +667,7 @@ async def _run_add_async(
                     model,
                     provider,
                     language_override=language_override,
+                    progress=emit,
                 )
                 registry.add(
                     convert_result.file_hash,
@@ -663,20 +681,21 @@ async def _run_add_async(
                 rename_note = ""
                 if doc_name != file_path.stem:
                     rename_note = f" as {doc_name}"
-                lines.append(
-                    f"OK {file_path.name}{rename_note}: pageindex summary written "
+                emit(
+                    f"  [OK] {file_path.name}{rename_note} added: pageindex summary written "
                     f"({convert_result.long_doc_page_count} pages), created {compile_result.created_concepts}, "
                     f"updated {compile_result.updated_concepts}, related {compile_result.related_concepts}"
                 )
                 continue
 
             if convert_result.source_path is None or convert_result.file_hash is None:
-                lines.append(f"ERROR {file_path.name}: conversion did not produce a source page")
+                emit(f"  [ERROR] Conversion failed: did not produce a source page for {file_path.name}")
                 continue
 
             doc_name = convert_result.doc_name or file_path.stem
 
             # Step 4b: compile normal source markdown into summary and concepts.
+            emit("  Compiling short doc...")
             compile_result = await compile_short_doc_async(
                 llm,
                 doc_name,
@@ -698,14 +717,14 @@ async def _run_add_async(
             rename_note = ""
             if doc_name != file_path.stem:
                 rename_note = f" as {doc_name}"
-            lines.append(
-                f"OK {file_path.name}{rename_note}: summary written, created {compile_result.created_concepts}, "
+            emit(
+                f"  [OK] {file_path.name}{rename_note} added: summary written, created {compile_result.created_concepts}, "
                 f"updated {compile_result.updated_concepts}, related {compile_result.related_concepts}"
             )
         except Exception as exc:
-            lines.append(f"ERROR {file_path.name}: {exc}")
+            emit(f"  [ERROR] {file_path.name}: {exc}")
 
-    return "\n".join(lines)
+    return "\n".join(transcript)
 
 
 def _build_init_parser(prog: str) -> argparse.ArgumentParser:
@@ -1029,6 +1048,12 @@ def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
             if llm is None:
                 output = _run_add(args.path, args.workspace, args.model, args.language, args.provider)
             else:
+                streamed_progress = {"used": False}
+
+                def stream_progress(line: str) -> None:
+                    streamed_progress["used"] = True
+                    print(line, flush=True)
+
                 output = _run_coro_sync(
                     _run_add_async(
                         args.path,
@@ -1037,6 +1062,7 @@ def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
                         args.language,
                         args.provider,
                         llm=llm,
+                        progress=stream_progress,
                     )
                 )
         elif args.wiki_command == "status":
@@ -1064,7 +1090,8 @@ def _handle_wiki_cli(args, *, llm: Any | None = None) -> None:
         output = f"Hermes wiki command failed: {exc}"
 
     # Step 2: command implementations return text; the CLI boundary prints it.
-    print(output)
+    if not llm or args.wiki_command != "add" or not streamed_progress["used"]:
+        print(output)
 
 
 def handle_wiki_cli(args) -> None:

@@ -6,6 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from typing import Any
 
 from .config import load_config
@@ -883,6 +884,7 @@ async def compile_pageindex_doc_async(
     provider: str | None,
     *,
     language_override: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> CompileResult:
     """Compile a long PDF through PageIndex into wiki summary and concepts."""
     # Step 1: load workspace compiler settings and schema guidance.
@@ -893,7 +895,16 @@ async def compile_pageindex_doc_async(
     system_prompt = _SYSTEM_TEMPLATE.format(schema_md=schema_md, language=language)
 
     # Step 2: build or load PageIndex state and render a compact summary.
-    pageindex = await build_or_load_pageindex_async(llm, doc_name, raw_path, paths, model, provider, language=language)
+    pageindex = await build_or_load_pageindex_async(
+        llm,
+        doc_name,
+        raw_path,
+        paths,
+        model,
+        provider,
+        language=language,
+        progress=progress,
+    )
     summary = _render_pageindex_summary(
         doc_name,
         pageindex.page_count,
@@ -903,6 +914,8 @@ async def compile_pageindex_doc_async(
     doc_brief = _brief_from_description(pageindex.doc_description)
 
     # Step 3: write a pageindex summary that points full_text to source JSONL.
+    if progress is not None:
+        progress("  Writing PageIndex summary...")
     _write_summary(
         wiki_dir,
         doc_name,
@@ -913,6 +926,8 @@ async def compile_pageindex_doc_async(
     )
 
     # Step 4: use the PageIndex summary as concept-generation context.
+    if progress is not None:
+        progress("  Compiling concept pages from PageIndex summary...")
     summary_user = _PAGEINDEX_SUMMARY_USER.format(
         doc_name=doc_name,
         page_count=pageindex.page_count,

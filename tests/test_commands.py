@@ -90,7 +90,10 @@ def test_run_add_accepts_nested_workspace_override(tmp_path: Path, monkeypatch) 
     output = asyncio.run(commands._run_add_async(str(source), str(nested_override), llm="fake-llm"))
     status_output = commands._run_status(str(workspace))
 
-    assert "OK note.md" in output
+    assert "Adding: note.md" in output
+    assert "Converting..." in output
+    assert "Compiling short doc..." in output
+    assert "[OK] note.md added: summary written" in output
     assert (workspace / "raw" / "note.md").is_file()
     assert (workspace / "wiki" / "sources" / "note.md").is_file()
     assert "Summary pages: 1" in status_output
@@ -113,7 +116,10 @@ def test_run_add_renames_duplicate_basenames(tmp_path: Path, monkeypatch) -> Non
 
     output = asyncio.run(commands._run_add_async(str(input_dir), str(workspace), llm="fake-llm"))
 
-    assert "OK dup.md" in output
+    assert "Found 2 supported file(s)" in output
+    assert "[1/2] Adding: dup.md" in output
+    assert "[2/2] Adding: dup.md" in output
+    assert "[OK] dup.md added: summary written" in output
     assert "as dup-2" in output
     assert (workspace / "raw" / "dup.md").is_file()
     assert (workspace / "raw" / "dup-2.md").is_file()
@@ -141,8 +147,8 @@ def test_run_add_continues_after_single_file_failure(tmp_path: Path, monkeypatch
     output = asyncio.run(commands._run_add_async(str(input_dir), str(workspace), llm="fake-llm"))
     status_output = commands._run_status(str(workspace))
 
-    assert "OK ok.md" in output
-    assert "ERROR bad.md: simulated compile failure" in output
+    assert "[OK] ok.md added: summary written" in output
+    assert "[ERROR] bad.md: simulated compile failure" in output
     assert "Known hashes: 1" in status_output
     assert (workspace / "wiki" / "sources" / "ok.md").is_file()
 
@@ -167,8 +173,8 @@ def test_run_add_reuses_doc_name_after_failed_attempt(tmp_path: Path, monkeypatc
     first_output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
     second_output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
 
-    assert "ERROR retry.md: first attempt failed" in first_output
-    assert "OK retry.md" in second_output
+    assert "[ERROR] retry.md: first attempt failed" in first_output
+    assert "[OK] retry.md added: summary written" in second_output
     assert "as retry-2" not in second_output
     assert (workspace / "raw" / "retry.md").is_file()
     assert not (workspace / "raw" / "retry-2.md").exists()
@@ -238,7 +244,7 @@ def test_run_add_passes_model_provider_and_language_overrides(tmp_path: Path, mo
         )
     )
 
-    assert "OK note.md" in output
+    assert "[OK] note.md added: summary written" in output
     assert captured["llm"] == "fake-llm"
     assert captured["doc_name"] == "note"
     assert captured["model"] == "override/model"
@@ -478,13 +484,26 @@ def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> No
 
     captured = {}
 
-    async def fake_compile_pageindex(llm, doc_name, raw_path_arg, paths_arg, model, provider, *, language_override=None):
+    async def fake_compile_pageindex(
+        llm,
+        doc_name,
+        raw_path_arg,
+        paths_arg,
+        model,
+        provider,
+        *,
+        language_override=None,
+        progress=None,
+    ):
         captured["llm"] = llm
         captured["doc_name"] = doc_name
         captured["raw_path"] = raw_path_arg
         captured["model"] = model
         captured["provider"] = provider
         captured["language_override"] = language_override
+        captured["progress_is_callable"] = callable(progress)
+        if progress is not None:
+            progress("  Extracting PDF pages...")
         (paths_arg.wiki_dir / "summaries" / f"{doc_name}.md").write_text(
             "---\ndoc_type: pageindex\nfull_text: sources/long.jsonl\n---\n\n# Summary\n",
             encoding="utf-8",
@@ -498,11 +517,15 @@ def test_run_add_routes_long_pdf_to_pageindex(tmp_path: Path, monkeypatch) -> No
     )
     list_output = commands._run_list(str(workspace))
 
-    assert "OK long.pdf: pageindex summary written (30 pages), created 2, updated 1, related 0" in output
+    assert "Adding: long.pdf" in output
+    assert "Long document detected - indexing with PageIndex..." in output
+    assert "Extracting PDF pages..." in output
+    assert "[OK] long.pdf added: pageindex summary written (30 pages), created 2, updated 1, related 0" in output
     assert captured["llm"] == "fake-llm"
     assert captured["doc_name"] == "long"
     assert captured["raw_path"] == raw_path
     assert captured["provider"] == "test-provider"
+    assert captured["progress_is_callable"] is True
     assert "- long (pageindex) <- long.pdf" in list_output
 
 
@@ -618,5 +641,28 @@ def test_failed_pageindex_build_does_not_register_hash(tmp_path: Path, monkeypat
     output = asyncio.run(commands._run_add_async(str(source), str(workspace), llm="fake-llm"))
     status_output = commands._run_status(str(workspace))
 
-    assert "ERROR long.pdf: pageindex failed" in output
+    assert "[ERROR] long.pdf: pageindex failed" in output
     assert "Known hashes: 0" in status_output
+
+
+def test_run_add_emits_progress_callback_lines(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    source = tmp_path / "note.md"
+    source.write_text("# Note\n", encoding="utf-8")
+    commands._run_init(str(workspace), "test/model", "en", 20)
+    monkeypatch.setattr(commands, "compile_short_doc_async", _stub_compile)
+    _allow_add_requirements(monkeypatch)
+
+    progress_lines: list[str] = []
+    output = asyncio.run(
+        commands._run_add_async(
+            str(source),
+            str(workspace),
+            llm="fake-llm",
+            progress=progress_lines.append,
+        )
+    )
+
+    assert progress_lines == output.splitlines()
+    assert progress_lines[0] == "Adding: note.md"
+    assert progress_lines[-1].startswith("  [OK] note.md added: summary written")
