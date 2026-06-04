@@ -12,6 +12,26 @@ logger = logging.getLogger(__name__)
 _BASE64_RE = re.compile(r"!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)")
 _RELATIVE_RE = re.compile(r"!\[([^\]]*)\]\((?!https?://|data:)([^)]+)\)")
 _MIN_IMAGE_DIM = 32
+_MIN_VISIBLE_BBOX_AREA = 1.0
+
+
+def _has_visible_bbox(block: dict[str, Any]) -> bool:
+    """Return True when an image block occupies visible page area."""
+    bbox = block.get("bbox")
+    if not bbox or len(bbox) != 4:
+        return False
+
+    try:
+        x0, y0, x1, y1 = (float(value) for value in bbox)
+    except (TypeError, ValueError):
+        return False
+
+    width = x1 - x0
+    height = y1 - y0
+    if width <= 0 or height <= 0:
+        return False
+
+    return (width * height) >= _MIN_VISIBLE_BBOX_AREA
 
 
 def load_pymupdf():
@@ -115,6 +135,8 @@ def extract_pdf_page_markdown(
         width = block.get("width", 0)
         height = block.get("height", 0)
         if width < _MIN_IMAGE_DIM or height < _MIN_IMAGE_DIM:
+            continue
+        if not _has_visible_bbox(block):
             continue
 
         image_bytes = block.get("image")
